@@ -76,7 +76,7 @@ function InstrumentRow(props: {
           {instrumentLabel(name)}
         </span>
       </div>
-      <div className="flex items-center gap-0.5">
+      <div className="flex w-[144px] shrink-0 items-center justify-end gap-0.5">
         <input
           type="range"
           min="0"

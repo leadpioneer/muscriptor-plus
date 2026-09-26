@@ -16,7 +16,7 @@ function VolumeSlider(props: {
     <label className="inline-flex items-center gap-2 text-sm text-muted">
       <span className="min-w-8 text-center">{label}</span>
       <input
-        className="mix-slider"
+        className="mix-slider w-[170px]"
         type="range"
         min="0"
         max="1"

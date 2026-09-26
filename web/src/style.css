@@ -227,7 +227,6 @@ body.drag .drop-overlay {
 /* Range thumbs need vendor pseudo-elements that utilities can't reach. */
 .mix-slider {
   appearance: none;
-  width: 170px;
   height: 4px;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--color-muted), var(--color-accent));

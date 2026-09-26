@@ -50,6 +50,7 @@ export const RU: Dict = {
   model_label: "Модель",
   model_loading: "загружается…",
   model_error: "ошибка загрузки",
+  model_retry: "повторить",
   instruments_given_hint:
     "Указанные вами инструменты. Серые — не обнаружены в записи.",
   more_instruments: "Другие инструменты",

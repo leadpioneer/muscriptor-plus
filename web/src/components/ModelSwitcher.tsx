@@ -47,7 +47,11 @@ export function ModelSwitcher() {
   }, [status]);
 
   async function change(next: string) {
-    if (status !== "ready" || next === size) return;
+    // "error" stays switchable: a failed load (e.g. HuggingFace access granted
+    // afterwards) must not wedge the picker — the server refuses only while a
+    // load is actually in flight.
+    if (status === "loading") return;
+    if (next === size && status === "ready") return;
     try {
       const form = new FormData();
       form.append("size", next);
@@ -93,13 +97,23 @@ export function ModelSwitcher() {
         </span>
       )}
       {status === "error" && (
-        <span
-          className="text-xs text-red"
-          role="alert"
-          title={error ?? ""}
-        >
-          {t("model_error")}
-        </span>
+        <>
+          <span
+            className="text-xs text-red"
+            role="alert"
+            title={error ?? ""}
+          >
+            {t("model_error")}
+          </span>
+          <button
+            type="button"
+            className="shrink-0 cursor-pointer rounded-md border border-line-strong px-1.5 py-0.5 text-xs text-content outline-none transition-colors duration-150 hover:border-accent hover:text-accent"
+            title={error ?? ""}
+            onClick={() => change(size)}
+          >
+            {t("model_retry")}
+          </button>
+        </>
       )}
     </label>
   );

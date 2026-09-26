@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { Button } from "./Button";
 import { useI18n } from "../i18n";
+import { EN } from "../i18n/en";
 import { IconDownload } from "./icons";
 import { track } from "../analytics";
 
@@ -33,7 +34,11 @@ export function SheetsDialog(props: {
   onClose: () => void;
 }) {
   const { files, zipBlob, zipFilename, quantized, onClose } = props;
-  const { t, instrumentLabel } = useI18n();
+  const { t } = useI18n();
+  // File names stay in English regardless of the UI language: they name files
+  // on disk, so Russian ("Электрогитара") would be confusing there.
+  const instrumentLabelEn = (id: string) =>
+    EN[`instr_${id}`] ?? id.replace(/_/g, " ");
 
   const urls = useMemo(
     () =>
@@ -109,7 +114,7 @@ export function SheetsDialog(props: {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] text-content">
-                  {describe(file.name, t, instrumentLabel)}
+                  {describe(file.name, instrumentLabelEn)}
                 </span>
                 <span className="block truncate font-mono text-[11px] text-faint">
                   {file.name}
@@ -175,16 +180,15 @@ function mimeOf(name: string): string {
  */
 function describe(
   name: string,
-  t: (key: string, params?: Record<string, string | number>) => string,
   instrumentLabel: (id: string) => string,
 ): string {
-  if (name === "score.mid") return t("sheets_midi_file");
-  if (name === "score.musicxml") return t("sheets_musicxml");
-  if (name === "full_score.pdf") return t("sheets_full_score");
+  if (name === "score.mid") return EN["sheets_midi_file"];
+  if (name === "score.musicxml") return EN["sheets_musicxml"];
+  if (name === "full_score.pdf") return EN["sheets_full_score"];
   const part = name.match(/^\d+_(.+?)(_tab)?\.pdf$/);
   if (!part) return name;
   const instrument = instrumentLabel(part[1]);
-  return instrument + (part[2] ? t("sheets_tablature") : "");
+  return instrument + (part[2] ? EN["sheets_tablature"] : "");
 }
 
 function formatSize(bytes: number): string {

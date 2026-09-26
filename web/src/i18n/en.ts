@@ -53,6 +53,7 @@ export const EN: Dict = {
   model_label: "Model",
   model_loading: "loading…",
   model_error: "load failed",
+  model_retry: "retry",
   instruments_given_hint:
     "The instruments you specified. Greyed-out ones weren't detected in the audio.",
   more_instruments: "More instruments",
