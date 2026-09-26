@@ -26,6 +26,16 @@ uv run hf auth login
 
 ### 4. Запуск
 
+Проще всего — два батника в корне репозитория:
+
+```bat
+install.bat   :: мастер установки: uv, зависимости, сборка UI, HF-логин, выбор модели
+start.bat     :: запуск сервера и открытие браузера на http://127.0.0.1:8222
+```
+
+`install.bat` можно перезапускать; выбранная модель сохраняется в `model.txt`
+(её потом можно менять и прямо в веб-интерфейсе). Ручной вариант:
+
 ```bash
 uv run muscriptor serve                 # веб-интерфейс на http://127.0.0.1:8222
 uv run muscriptor serve --model large   # сразу большая модель
@@ -68,6 +78,16 @@ uv run hf auth login
 ```
 
 ### 4. Run
+
+The easiest way — two batch files in the repo root:
+
+```bat
+install.bat   :: setup wizard: uv, deps, web UI build, HF login, model choice
+start.bat     :: start the server and open http://127.0.0.1:8222
+```
+
+`install.bat` can be re-run; the chosen model is stored in `model.txt`
+(you can also switch models later right in the web UI). Manual option:
 
 ```bash
 uv run muscriptor serve                 # web UI at http://127.0.0.1:8222

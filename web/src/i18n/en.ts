@@ -11,7 +11,7 @@ export const EN: Dict = {
 
   // Welcome screen
   welcome_intro:
-    "MuScriptor is the best open model for multi-instrument transcription to date. Give it a recording: pop, classical, metal, jazz, whatever, and it transcribes the notes played by every instrument into MIDI and sheet music, for you to download or explore interactively.",
+    "MuScriptor Plus is a fork of MuScriptor, the best open multi-instrument transcription model to date: it adds a Russian UI, per-instrument volume controls and live model switching. Give it a recording — pop, classical, metal, jazz, whatever — and it transcribes the notes played by every instrument into MIDI and sheet music, for you to download or explore interactively.",
   drop_audio_here: "Drop an",
   drop_audio_here_strong: "audio file",
   drop_audio_here_tail: "here, or",
@@ -102,10 +102,10 @@ export const EN: Dict = {
   // Progress / feedback
   estimating: "estimating…",
   done_in: "done in {time}",
-  feedback_intro: "Feedback, question, bug? ",
+  feedback_intro: "Found a bug or have an idea? ",
   feedback_email: "Email us",
   feedback_or: " or ",
-  feedback_issue: "open an issue",
+  feedback_issue: "create an issue on GitHub",
 
   // App dialogs
   confirm_discard: "Discard this transcription and start over?",
@@ -125,7 +125,7 @@ export const EN: Dict = {
 
   // Footer
   footer_about_pre:
-    "MuScriptor is a multi-instrument automatic music transcription model: it turns raw audio into per-instrument MIDI. Built by",
+    "MuScriptor Plus is an enhanced fork of the MuScriptor transcription model: it turns raw audio into per-instrument MIDI. The model was trained by",
   footer_and: "and",
 
   // FAQ
@@ -135,12 +135,12 @@ export const EN: Dict = {
 /** FAQ pairs; answers support `[label](href)` links and `code` spans. */
 export const FAQ_EN: { q: string; a: string }[] = [
   {
-    q: "What is MuScriptor?",
-    a: "MuScriptor turns music into MIDI and sheet music: you give it a recording and it transcribes the notes played by every instrument. It was developed by [Kyutai](https://kyutai.org/) and [Mirelo](https://mirelo.ai/).",
+    q: "What is MuScriptor Plus?",
+    a: "MuScriptor Plus is an enhanced fork of [MuScriptor](https://github.com/muscriptor/muscriptor), the multi-instrument transcription model developed by [Kyutai](https://kyutai.org/) and [Mirelo](https://mirelo.ai/): it turns music into MIDI and sheet music — you give it a recording and it transcribes the notes played by every instrument. The fork adds a Russian UI, volume controls, live model switching and Windows fixes.",
   },
   {
     q: "Is it free to use?",
-    a: "Yes. This demo is free, the code is MIT-licensed, and the model weights are published on HuggingFace under CC BY-NC 4.0 (non-commercial use). If you want to run it locally, check out our [GitHub repo](https://github.com/muscriptor/muscriptor).",
+    a: "Yes. This app is free, the code is MIT-licensed, and the model weights are published on HuggingFace under CC BY-NC 4.0 (non-commercial use). If you want to run it locally, check out the [MuScriptor Plus GitHub repo](https://github.com/leadpioneer/muscriptor-plus).",
   },
   {
     q: "What audio formats can I upload?",
@@ -160,7 +160,7 @@ export const FAQ_EN: { q: string; a: string }[] = [
   },
   {
     q: "Can I run it locally or use it from Python?",
-    a: "Yes. `uvx muscriptor serve` runs this same web UI on your machine, `uvx muscriptor transcribe song.mp3` does it from the command line, and the Python API is a couple of lines. It runs on NVIDIA GPUs, on Apple Silicon via Metal, and on CPU with the small model. [Setup instructions are on GitHub](https://github.com/muscriptor/muscriptor).",
+    a: "Yes. Clone [the MuScriptor Plus repo](https://github.com/leadpioneer/muscriptor-plus) and run `install.bat` / `start.bat` on Windows (or see QUICKSTART.md for the manual setup) — `muscriptor serve` runs this same web UI on your machine, `muscriptor transcribe song.mp3` does it from the command line. It runs on NVIDIA GPUs, on Apple Silicon via Metal, and on CPU with the small model.",
   },
   {
     q: "How accurate is it?",
@@ -168,7 +168,7 @@ export const FAQ_EN: { q: string; a: string }[] = [
   },
   {
     q: "What happens to the audio I upload?",
-    a: "It's transcribed on the server and not kept afterwards. If you'd rather it never leaves your machine, [run MuScriptor locally](https://github.com/muscriptor/muscriptor).",
+    a: "It's transcribed on the server and not kept afterwards. If you'd rather it never leaves your machine, [run MuScriptor Plus locally](https://github.com/leadpioneer/muscriptor-plus).",
   },
   {
     q: "How does it work, technically?",
@@ -176,10 +176,10 @@ export const FAQ_EN: { q: string; a: string }[] = [
   },
   {
     q: "Where can I find the code?",
-    a: "On GitHub: [github.com/muscriptor/muscriptor](https://github.com/muscriptor/muscriptor). The code is MIT-licensed.",
+    a: "On GitHub: [github.com/leadpioneer/muscriptor-plus](https://github.com/leadpioneer/muscriptor-plus) — a fork of [MuScriptor](https://github.com/muscriptor/muscriptor). The code is MIT-licensed.",
   },
   {
     q: "How do I report a bug or send feedback?",
-    a: "Please [email us](mailto:muscriptor@kyutai.org) or [open an issue on GitHub](https://github.com/muscriptor/muscriptor/issues/new/choose).",
+    a: "Please [open an issue on GitHub](https://github.com/leadpioneer/muscriptor-plus/issues/new/choose) — bugs and suggestions for this fork are handled in its own repository.",
   },
 ];

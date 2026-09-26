@@ -7,7 +7,7 @@ export const RU: Dict = {
 
   // Welcome screen
   welcome_intro:
-    "MuScriptor — лучшая на сегодня открытая модель мультиинструментальной транскрипции. Дайте ей запись — поп, классику, метал, джаз, что угодно — и она распознает ноты, сыгранные каждым инструментом, в MIDI и нотный лист, который можно скачать или исследовать в интерактивном плеере.",
+    "MuScriptor Plus — это форк MuScriptor, лучшей на сегодня открытой модели мультиинструментальной транскрипции: русскоязычный интерфейс, раздельная громкость по инструментам и переключение модели на ходу. Дайте ей запись — поп, классику, метал, джаз, что угодно — и она распознает ноты, сыгранные каждым инструментом, в MIDI и нотный лист, который можно скачать или исследовать в интерактивном плеере.",
   drop_audio_here: "Перетащите сюда",
   drop_audio_here_strong: "аудио-файл",
   drop_audio_here_tail: ", или",
@@ -99,10 +99,10 @@ export const RU: Dict = {
   // Progress / feedback
   estimating: "оцениваем…",
   done_in: "готово через {time}",
-  feedback_intro: "Отзыв, вопрос, баг? ",
+  feedback_intro: "Нашли баг или есть идея? ",
   feedback_email: "Напишите нам",
   feedback_or: " или ",
-  feedback_issue: "создайте issue",
+  feedback_issue: "создайте issue на GitHub",
 
   // App dialogs
   confirm_discard: "Отбросить эту расшифровку и начать заново?",
@@ -122,7 +122,7 @@ export const RU: Dict = {
 
   // Footer
   footer_about_pre:
-    "MuScriptor — модель автоматической мультиинструментальной транскрипции музыки: превращает исходное аудио в MIDI по инструментам. Разработано",
+    "MuScriptor Plus — расширенный форк модели транскрипции MuScriptor: превращает исходное аудио в MIDI по инструментам. Модель обучена",
   footer_and: "и",
 
   // FAQ
@@ -169,12 +169,12 @@ export const RU: Dict = {
 /** FAQ pairs; answers support `[label](href)` links and `code` spans. */
 export const FAQ_RU: { q: string; a: string }[] = [
   {
-    q: "Что такое MuScriptor?",
-    a: "MuScriptor превращает музыку в MIDI и ноты: вы даёте ему запись, а он распознаёт ноты, сыгранные каждым инструментом. Модель разработана компаниями [Kyutai](https://kyutai.org/) и [Mirelo](https://mirelo.ai/).",
+    q: "Что такое MuScriptor Plus?",
+    a: "MuScriptor Plus — расширенный форк [MuScriptor](https://github.com/muscriptor/muscriptor), модели мультиинструментальной транскрипции, разработанной компаниями [Kyutai](https://kyutai.org/) и [Mirelo](https://mirelo.ai/): вы даёте ему запись, а он распознаёт ноты, сыгранные каждым инструментом, в MIDI и ноты. Форк добавляет русский интерфейс, раздельную громкость, переключение модели на ходу и исправления для Windows.",
   },
   {
     q: "Это бесплатно?",
-    a: "Да. Демо бесплатно, код — под лицензией MIT, а веса модели опубликованы на HuggingFace под CC BY-NC 4.0 (некоммерческое использование). Если хотите запустить локально, загляните в наш [репозиторий на GitHub](https://github.com/muscriptor/muscriptor).",
+    a: "Да. Приложение бесплатно, код — под лицензией MIT, а веса модели опубликованы на HuggingFace под CC BY-NC 4.0 (некоммерческое использование). Если хотите запустить локально, загляните в [репозиторий MuScriptor Plus на GitHub](https://github.com/leadpioneer/muscriptor-plus).",
   },
   {
     q: "Какие аудио-форматы можно загружать?",
@@ -194,7 +194,7 @@ export const FAQ_RU: { q: string; a: string }[] = [
   },
   {
     q: "Можно ли запустить локально или из Python?",
-    a: "Да. `uvx muscriptor serve` запускает этот же веб-интерфейс на вашей машине, `uvx muscriptor transcribe song.mp3` — из командной строки, а Python API — пара строк. Работает на NVIDIA GPU, на Apple Silicon через Metal и на CPU с малой моделью. [Инструкции по установке — на GitHub](https://github.com/muscriptor/muscriptor).",
+    a: "Да. Склонируйте [репозиторий MuScriptor Plus](https://github.com/leadpioneer/muscriptor-plus) и запустите `install.bat` / `start.bat` на Windows (либо см. QUICKSTART.md для ручной установки) — `muscriptor serve` открывает этот же веб-интерфейс на вашей машине, `muscriptor transcribe song.mp3` работает из командной строки. Работает на NVIDIA GPU, на Apple Silicon через Metal и на CPU с малой моделью.",
   },
   {
     q: "Насколько это точно?",
@@ -202,7 +202,7 @@ export const FAQ_RU: { q: string; a: string }[] = [
   },
   {
     q: "Что происходит с загруженным аудио?",
-    a: "Оно расшифровывается на сервере и потом не сохраняется. Если не хотите, чтобы аудио покидало вашу машину, — [запустите MuScriptor локально](https://github.com/muscriptor/muscriptor).",
+    a: "Оно расшифровывается на сервере и потом не сохраняется. Если не хотите, чтобы аудио покидало вашу машину, — [запустите MuScriptor Plus локально](https://github.com/leadpioneer/muscriptor-plus).",
   },
   {
     q: "Как это работает технически?",
@@ -210,10 +210,10 @@ export const FAQ_RU: { q: string; a: string }[] = [
   },
   {
     q: "Где найти код?",
-    a: "На GitHub: [github.com/muscriptor/muscriptor](https://github.com/muscriptor/muscriptor). Код — под лицензией MIT.",
+    a: "На GitHub: [github.com/leadpioneer/muscriptor-plus](https://github.com/leadpioneer/muscriptor-plus) — форк [MuScriptor](https://github.com/muscriptor/muscriptor). Код — под лицензией MIT.",
   },
   {
     q: "Как сообщить о баге или отправить отзыв?",
-    a: "Напишите нам на [почту](mailto:muscriptor@kyutai.org) или [создайте issue на GitHub](https://github.com/muscriptor/muscriptor/issues/new/choose).",
+    a: "Пожалуйста, [создайте issue на GitHub](https://github.com/leadpioneer/muscriptor-plus/issues/new/choose) — баги и предложения по этому форку принимаются в его собственном репозитории.",
   },
 ];

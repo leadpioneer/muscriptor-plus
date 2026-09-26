@@ -15,7 +15,7 @@ export function FeedbackLine({ className }: { className?: string }) {
     { text: t("feedback_or") },
     {
       text: t("feedback_issue"),
-      href: "https://github.com/muscriptor/muscriptor/issues/new/choose",
+      href: "https://github.com/leadpioneer/muscriptor-plus/issues/new/choose",
     },
   ];
   const total = segments.reduce((n, s) => n + s.text.length, 0);

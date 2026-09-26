@@ -1,54 +1,54 @@
-name: Bad transcription
-description: The model transcribed a song wrong (missing notes, wrong instrument, wrong rhythm...)
+name: Некорректная расшифровка
+description: Модель распознала песню неверно (пропущенные ноты, не тот инструмент, сбитый ритм…)
 labels: ["transcription quality"]
 body:
   - type: markdown
     attributes:
       value: |
-        **We can't do anything without the audio.** Every transcription report needs the
-        exact file you were transcribing, otherwise we cannot fix the issue.
+        **Без аудио сделать ничего нельзя.** К каждому отчёту нужно приложить
+        именно тот файл, который расшифровывался, иначе проблему не воспроизвести.
 
-        Note that the model is not perfect: some wrong notes are an expected
-        failure case and the answer will be "fix it up afterwards in a DAW or
-        notation editor". We're looking for systematic problems - long dropouts,
-        everything landing on one track, a part that never appears.
+        Учтите: модель не идеальна, отдельные неверные ноты — ожидаемая ситуация,
+        и ответ будет «поправить потом в DAW или нотном редакторе». Ищем
+        системные проблемы: долгие выпадения звука, все ноты на одном треке,
+        полностью потерянная партия.
   - type: textarea
     id: audio
     attributes:
-      label: The audio file
+      label: Аудио-файл
       description: |
-        Drag-and-drop the file here, or paste a Google Drive/Dropbox link. If you can't
-        share it publicly, email it to muscriptor@kyutai.org and write "sent by email" here.
-      placeholder: (drag the file into this box)
+        Перетащите файл прямо в это поле или дайте ссылку на Google Drive/Dropbox.
+        (Почта для вложений не используется — только GitHub Issues.)
+      placeholder: (перетащите файл в это поле)
     validations:
       required: true
   - type: textarea
     id: what
     attributes:
-      label: What's wrong, and where?
+      label: Что не так, и в каком месте?
       description: |
-        One or two sentences, plus timestamps, e.g. "The guitar disappears from 3:05 to 3:45".
-        A screenshot of the piano roll helps.
+        Пара предложений плюс таймкоды, например: «Гитара исчезает с 3:05 до 3:45».
+        Поможет скриншот пиано-ролла.
       placeholder: |
-        The hi-hat is transcribed as 8 hits per bar instead of 4, from the start.
+        Хай-хэт распознаётся как 8 ударов в такт вместо 4, с самого начала.
     validations:
       required: true
   - type: input
     id: command
     attributes:
-      label: How did you run it?
-      description: The exact command, or "web app at muscriptor.com".
+      label: Как запускали?
+      description: Точная команда, либо «веб-интерфейс (локальный сервер)».
       placeholder: muscriptor transcribe song.wav --model large
     validations:
       required: true
   - type: input
     id: version
     attributes:
-      label: Version
-      description: Output of `muscriptor --version`. Skip if you used the web app.
+      label: Версия
+      description: Вывод `muscriptor --version`. Пропустите, если пользовались веб-интерфейсом.
       placeholder: "0.3.0"
   - type: markdown
     attributes:
       value: |
-        Please write your report yourself, even imperfectly. Short human-written text is
-        much easier for us to act on than a long AI-generated one.
+        Напишите отчёт своими словами — короткий человекописанный текст
+        полезнее длинного текста, сгенерированного ИИ.

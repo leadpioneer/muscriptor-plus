@@ -1,230 +1,172 @@
 <p align="center">
-  <img src="web/logo_muscriptor_final.png" alt="MuScriptor logo" width="300">
+  <img src="web/logo_muscriptor_final.png" alt="MuScriptor Plus" width="300">
 </p>
 
-# MuScriptor
+<h1 align="center">MuScriptor Plus</h1>
 
-MuScriptor is a multi-instrument music transcription model developed by [Kyutai](https://kyutai.org) and [Mirelo](https://www.mirelo.ai).
-It turns a recording into MIDI and into sheet music.
-It's the most accurate open-source transcription model.
-You can use the model [here](https://muscriptor.kyutai.org) or self-host it using this repository.
-
-> **This fork** (`leadpioneer/muscriptor-plus`) adds, on top of upstream:
-> a bilingual web UI (English / Russian, switcher in the header), volume controls
-> (master, per-source and per-instrument), live model switching from the web UI,
-> engraving any MIDI file to sheet music from the welcome screen, and Windows
-> quality-of-life fixes (automatic MuseScore detection, GPU (cu128) torch on
-> Windows). See [QUICKSTART.md](QUICKSTART.md) for a quick bilingual setup guide.
-
-
-[Use it](https://muscriptor.kyutai.org) | [Paper](https://arxiv.org/abs/2607.08168v1) | [HuggingFace](https://huggingface.co/MuScriptor)
-
-<!-- TODO: record the demo GIF (web UI piano roll), save it as assets/demo.gif,
-     then uncomment:
 <p align="center">
-  <img src="assets/demo.gif" alt="MuScriptor web UI: live piano roll while transcribing" width="700">
+  <a href="README.en.md">🇬🇧 English version</a> ·
+  <a href="QUICKSTART.md">Быстрый старт</a> ·
+  <a href="https://github.com/leadpioneer/muscriptor-plus/issues/new/choose">Сообщить о баге</a>
 </p>
--->
 
-## HuggingFace login (required)
+<p align="center">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/OS-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey" alt="OS">
+  <img src="https://img.shields.io/badge/GPU-CUDA%20%7C%20Metal-76b900" alt="GPU">
+</p>
 
-To use MuScriptor locally, you first need to log into [HuggingFace](https://huggingface.co/MuScriptor)
-and accept the CC BY-NC 4.0 license.
+**MuScriptor Plus** — расширенный форк [MuScriptor](https://github.com/muscriptor/muscriptor):
+модели автоматической мультиинструментальной транскрипции от [Kyutai](https://kyutai.org)
+и [Mirelo](https://www.mirelo.ai). Загружаете запись — получаете MIDI и нотный лист
+по каждому инструменту. Поддерживается русский и английский интерфейс.
 
-1. Accept the model license on the model page for the [small](https://huggingface.co/MuScriptor/muscriptor-small),
-   [medium](https://huggingface.co/MuScriptor/muscriptor-medium) or [large](https://huggingface.co/MuScriptor/muscriptor-large) model
-   (access is granted automatically).
-2. Authenticate on your machine:
+## Чем Plus отличается от оригинала
+
+| Возможность | Оригинал | Plus |
+|---|---|---|
+| Интерфейс | английский | **русский + английский** (переключатель в шапке) |
+| Громкость | общий кроссфейд | **мастер, оригинал/MIDI по отдельности, каждый инструмент** |
+| Выбор модели | только флагом при запуске | **переключение прямо в веб-интерфейсе** |
+| MIDI → ноты | только из расшифровки | **любой ваш MIDI-файл** |
+| Windows | MuseScore/FluidSynth руками | **автоопределение MuseScore, GPU-сборка PyTorch (cu128), UTF-8** |
+| Установка | вручную | **мастер `install.bat` + `start.bat`** |
+
+Основа оригинала не тронута: точность модели, CLI, Python API, форматы.
+
+## Быстрый старт (Windows)
+
+Понадобятся: Windows 10/11, [Git](https://git-scm.com/download/win), аккаунт
+[HuggingFace](https://huggingface.co) с принятой лицензией модели (см. ниже).
+
+```bat
+git clone https://github.com/leadpioneer/muscriptor-plus
+cd muscriptor-plus
+install.bat   :: мастер установки: uv, зависимости, веб-UI, HF-логин, выбор модели
+start.bat     :: запуск сервера + открытие браузера на http://127.0.0.1:8222
+```
+
+`install.bat` проведёт по шагам и запомнит выбранную модель; `start.bat` дальше
+запускает сервер одной командой. Всё то же самое вручную — в
+[QUICKSTART.md](QUICKSTART.md).
+
+## Вход в HuggingFace (обязателен)
+
+Веса модели опубликованы под лицензией **CC BY-NC 4.0** (некоммерческое
+использование) и закрыты gated-доступом:
+
+1. Примите лицензию на странице модели: [small](https://huggingface.co/MuScriptor/muscriptor-small),
+   [medium](https://huggingface.co/MuScriptor/muscriptor-medium) или
+   [large](https://huggingface.co/MuScriptor/muscriptor-large) — доступ выдаётся автоматически.
+2. Авторизуйтесь на машине (мастер `install.bat` сделает это за вас):
 
    ```bash
-   uvx hf auth login
+   uv run hf auth login
    ```
 
-   or set a token (create one at
+   либо задайте токен (создаётся на
    [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)):
 
    ```bash
-   export HF_TOKEN=hf_...
+   export HF_TOKEN=hf_...        # Linux/macOS
+   $env:HF_TOKEN = "hf_..."      # PowerShell
    ```
 
-The weights are then automatically downloaded on first use and cached locally.
+Веса скачиваются при первом использовании и кешируются локально.
 
-## Try it locally
+## Модели
 
-After Hugging Face authentication, you can use MuScriptor with `uvx` without having to clone this repo.
+| Вариант | Параметры | Слои | Dim | HuggingFace |
+|---|---|---|---|---|
+| `small` | 103M | 14 | 768 | [muscriptor-small](https://huggingface.co/MuScriptor/muscriptor-small) |
+| `medium` (по умолчанию) | 307M | 24 | 1024 | [muscriptor-medium](https://huggingface.co/MuScriptor/muscriptor-medium) |
+| `large` | 1.4B | 48 | 1536 | [muscriptor-large](https://huggingface.co/MuScriptor/muscriptor-large) |
 
-Some platforms need an extra `uvx` flag, on every `uvx muscriptor` command:
+- `small` — для машин без GPU; `medium` — баланс скорости и точности;
+  `large` — самая точная, но требует GPU (на 16 ГБ VRAM занимает ~12 ГБ).
+- В веб-интерфейсе модель переключается **на ходу** из выпадающего списка в
+  шапке: новые веса грузятся в фоне, во время транскрипции переключение
+  отклоняется, память старой модели освобождается. Веса кешируются.
+- На Apple Silicon модель автоматически работает через Metal (MPS).
 
-| Platform | Command |
-|---|---|
-| Linux, macOS with Apple Silicon | `uvx muscriptor serve` |
-| Windows (to use the GPU) | `uvx --torch-backend=cu128 muscriptor serve` |
-| macOS with Intel | `uvx --python 3.12 muscriptor serve` |
-
-On Windows the default PyTorch backend is `cpu`, so the GPU needs
-`--torch-backend=cu128`. On Intel Macs, PyTorch stopped shipping x86_64 wheels
-after torch 2.2.2, which supports Python ≤ 3.12, so the Python version has to
-be pinned (if you install with pip/uv instead, use Python 3.10–3.12).
-
-## Web UI
-
-You can host the web UI locally with:
+## CLI
 
 ```bash
-uvx muscriptor serve
+uv run muscriptor transcribe song.mp3            # MIDI
+uv run muscriptor transcribe song.mp3 --format sheets --output score/   # ноты
+uv run muscriptor serve --model large            # веб-интерфейс
 ```
 
-This gives you the same UI as hosted on https://muscriptor.kyutai.org/, just with a different look.
+Полный список опций — `--help`.
 
-The sheet music download needs **MuseScore 4 or newer** installed separately (see
-[Sheet music](#sheet-music) below). Without it, everything except that download still works.
+### Нотный лист
 
-## Command-line interface (CLI)
-
-```bash
-uvx muscriptor transcribe path/to/audio_file.wav
-```
-
-See `--help` for all the options.
-
-### Sheet music
-
-Using the CLI with `--format sheets` engraves the transcription as readable notation instead of
-writing a single MIDI file.
-
-```bash
-muscriptor transcribe audio.wav --format sheets --output score/
-```
-
-The output structure looks like this:
+`--format sheets` (или кнопка «Скачать → Нотный лист» в веб-UI) создаёт:
 
 ```
 score/
-├── score.mid                       the transcription, as quantized MIDI
-├── score.musicxml                  the engraved score, as MusicXML
-├── full_score.pdf                  every instrument on one system
-├── 01_electric_guitar.pdf          one PDF per instrument …
-├── 01_electric_guitar_tab.pdf      … and a tablature PDF for fretted ones
+├── score.mid                       расшифровка (квантованный MIDI)
+├── score.musicxml                  партитура MusicXML
+├── full_score.pdf                  все инструменты на одной системе
+├── 01_electric_guitar.pdf          PDF по инструменту…
+├── 01_electric_guitar_tab.pdf      …и табулатура для ладовых
 ├── 02_electric_bass.pdf
-├── 02_electric_bass_tab.pdf
 └── 03_drum_kit.pdf
 ```
 
-This needs **MuseScore 4 or newer** installed separately. Downloads for every
-platform are at [musescore.org/en/download](https://musescore.org/en/download).
-Set `$MUSCRIPTOR_MUSESCORE` if it lives somewhere unusual.
+Для нот нужен установленный **[MuseScore 4+](https://musescore.org/en/download)**:
+стандартные пути установки находятся автоматически, иначе задайте
+`MUSCRIPTOR_MUSESCORE`. Лучше всего работает музыка с устойчивым темпом —
+тогда ноты квантуются по сетке; рубато-записи читаются хуже.
 
-It works best if there is a steady tempo (i.e. playing with a metronome), because
-that allows us to quantize the notes (snap them to a grid) for a cleaner transcription.
-Rubato recordings will work significantly worse.
+## Windows-нюансы
 
-## Using from Python
+- **GPU**: PyPI-сборка PyTorch для Windows — CPU-only, поэтому в этом форке
+  torch на Windows привязан к индексу `cu128` (обязательно для RTX 50xx,
+  подходит и старым картам NVIDIA). `uv sync` делает это сам.
+- **Кодировка консоли**: при запуске с перенаправлением вывода ставьте
+  `PYTHONUTF8=1` (`start.bat` уже делает это) — иначе отладочный вывод может
+  упасть на не-ASCII символах в cp1251.
+- **MuseScore**: определяется автоматически (Program Files, пользовательская
+  установка); нестандартный путь — через `MUSCRIPTOR_MUSESCORE`.
+- **FluidSynth** (экспорт WAV): бинарник должен быть в PATH; официальный
+  Windows-билд, распакованный в `tools\fluidsynth` (в `.gitignore`), — удобный
+  вариант, `start.bat` подключает его сам.
 
-MuScriptor is also on PyPI, so you can install it with with uv (recommended) or with pip:
+## Разработка
 
-```bash
-uv add muscriptor
-```
-
-```bash
-pip install muscriptor
-```
-
-Ask your coding agent to show you around the codebase.
-
-## Models
-
-Three variants are published under the [MuScriptor](https://huggingface.co/MuScriptor)
-HuggingFace organization. Everywhere a model is selected (`load_model()`, the
-CLI's `--model`, `serve --model`) you can pass the bare size keyword and the
-weights are downloaded and cached automatically. The architecture is a transformer decoder only. Here are the detailed model sizes:
-
-| Variant | Parameters | Layers | Dim | HuggingFace repo |
-|---|---|---|---|---|
-| `small` | 103M | 14 | 768 | [muscriptor-small](https://huggingface.co/MuScriptor/muscriptor-small) |
-| `medium` (default) | 307M | 24 | 1024 | [muscriptor-medium](https://huggingface.co/MuScriptor/muscriptor-medium) |
-| `large` | 1.4B | 48 | 1536 | [muscriptor-large](https://huggingface.co/MuScriptor/muscriptor-large) |
-
-`small` is the practical choice on CPU-only machines, `medium` is the default
-speed/accuracy trade-off, and `large` is the most accurate but really wants a
-GPU. On Apple Silicon the model runs on Metal (MPS) automatically.
-
-In the web UI the model can be switched live from the header dropdown
-(`small` / `medium` / `large`): new weights load in the background, the swap is
-refused while a transcription is running, and the previous model's GPU memory
-is freed. Weights are downloaded once and cached.
-
-### Windows specifics
-
-- **GPU (torch)**: PyPI's default Windows torch wheel is CPU-only, so this
-  fork pins torch to PyTorch's `cu128` index on Windows (required by RTX 50xx,
-  fine for older NVIDIA cards). `uv sync` handles it automatically.
-- **Console encoding**: when running the server with redirected output, set
-  `PYTHONUTF8=1` — otherwise debug prints can crash on non-ASCII characters
-  under the cp1251 codepage.
-- **MuseScore** (sheet music): standard install locations
-  (`C:\Program Files\MuseScore 4\bin\…`, per-user installs) are probed
-  automatically; for anything unusual set `MUSCRIPTOR_MUSESCORE`.
-- **FluidSynth** (WAV export): must be on PATH; an unpacked official Windows
-  build under `tools/fluidsynth` (gitignored) added to PATH works well.
-
-## Developing
-
-To set up for development, get [uv](https://docs.astral.sh/uv/getting-started/installation/),
-clone this repo and run:
 ```bash
 uv sync
-```
-For the web UI, you also need [pnpm](https://pnpm.io/installation) and Node
-(can be installed [via pnpm](https://pnpm.io/cli/runtime)).
-Then run:
-
-```bash
-cd web
-pnpm install
-pnpm run build
+cd web && pnpm install && pnpm run build   # только если меняете фронтенд
 ```
 
-If you're not editing the frontend, you only need to do this once.
-If you are, run `pnpm dev` instead for a hot-reloading dev server.
-Start the backend alongside it with it using `uv run muscriptor serve --port 8222`
-and then open the frontend on http://localhost:5173/.
+Для горячего релоада фронтенда: `pnpm dev` в `web/` и
+`uv run muscriptor serve --port 8222` рядом; открывать http://localhost:5173/.
 
-### Run
+## Баги и предложения
 
-After this setup, you can run Muscriptor from your local repository using
-`uv` (note - not `uvx` like before):
+Используйте [шаблоны Issues](https://github.com/leadpioneer/muscriptor-plus/issues/new/choose)
+этого репозитория.
 
-```bash
-uv run muscriptor serve
-# or 
-uv run muscriptor transcribe path/to/audio_file.wav
-```
+## Лицензия
 
-Again, see `--help` for more options.
+Код — под лицензией [MIT](LICENSE) (© Kyutai × Mirelo, © LeadPioneer).
+Веса модели на [HuggingFace](https://huggingface.co/MuScriptor) — под
+[CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
+(некоммерческое использование). Звуковой шрифт MuseScore General,
+используемый для проигрывания, распространяется под своей лицензией (MIT).
 
-## License
-
-The code in this repository is released under the [MIT license](LICENSE).
-
-The model weights, published on
-[HuggingFace](https://huggingface.co/MuScriptor), are released under the
-[CC BY-NC 4.0 license](https://creativecommons.org/licenses/by-nc/4.0/)
-(non-commercial use).
-
-The MuseScore General SoundFont downloaded for playback is
-distributed under its own (MIT) license.
-
-## Citation
+## Цитирование
 
 ```bibtex
 @misc{rouard2026muscriptoropenmodelmultiinstrument,
-      title={MuScriptor: An Open Model for Multi-Instrument Music Transcription}, 
+      title={MuScriptor: An Open Model for Multi-Instrument Music Transcription},
       author={Simon Rouard and Michael Krause and Axel Roebel and Carl-Johann Simon-Gabriel and Alexandre Défossez},
       year={2026},
       eprint={2607.08168},
       archivePrefix={arXiv},
       primaryClass={cs.SD},
-      url={https://arxiv.org/abs/2607.08168}, 
+      url={https://arxiv.org/abs/2607.08168},
 }
 ```

@@ -1,25 +1,25 @@
-name: Bug report
-description: A crash, an error message, wrong output from the code (not from the model)
+name: Баг (репорт)
+description: Падение, сообщение об ошибке, неверная работа кода (не модели)
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        For "the model transcribed my song wrong", use the *Bad transcription* template instead.
+        Если проблема в качестве расшифровки («модель неправильно распознала мою песню»),
+        используйте шаблон *Некорректная расшифровка*.
   - type: textarea
     id: what
     attributes:
-      label: What happened?
-      description: What you expected, what you got. Paste the full traceback or error output.
+      label: Что произошло?
+      description: Что ожидали, что получили. Вставьте полный traceback или текст ошибки.
     validations:
       required: true
   - type: textarea
     id: repro
     attributes:
-      label: How to reproduce
-      description: "The exact command(s). If it only happens with a specific file, attach it:
-        Drag-and-drop the file here, or paste a Google Drive/Dropbox link. If you can't
-        share it publicly, email it to muscriptor@kyutai.org and write \"sent by email\" here."
+      label: Как воспроизвести
+      description: "Точные команды. Если проблема только с конкретным файлом, приложите его:
+        перетащите файл прямо в это поле или дайте ссылку на Google Drive/Dropbox."
       placeholder: |
         1. muscriptor transcribe song.wav --format sheets
         2. ...
@@ -28,9 +28,9 @@ body:
   - type: textarea
     id: env
     attributes:
-      label: Environment
-      description: OS, Python version, `muscriptor --version`, device (CPU/CUDA/MPS).
+      label: Окружение
+      description: ОС, версия Python, `muscriptor --version`, устройство (CPU/CUDA/MPS).
       placeholder: |
-        macOS 15.1, Python 3.11, muscriptor 0.3.0, MPS
+        Windows 11, Python 3.12, muscriptor 0.3.0, CUDA (RTX 5060 Ti)
     validations:
       required: true
