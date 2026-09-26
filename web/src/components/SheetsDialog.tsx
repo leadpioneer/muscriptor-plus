@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { Button } from "./Button";
+import { useI18n } from "../i18n";
 import { IconDownload } from "./icons";
 import { track } from "../analytics";
 
@@ -32,6 +33,7 @@ export function SheetsDialog(props: {
   onClose: () => void;
 }) {
   const { files, zipBlob, zipFilename, quantized, onClose } = props;
+  const { t, instrumentLabel } = useI18n();
 
   const urls = useMemo(
     () =>
@@ -77,13 +79,12 @@ export function SheetsDialog(props: {
         className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-card border border-line-strong bg-surface shadow-overlay"
       >
         <div className="border-b border-line px-5 py-4">
-          <h2 className="m-0 text-base font-semibold text-content">Download sheet music</h2>
+          <h2 className="m-0 text-base font-semibold text-content">{t("sheets_title")}</h2>
         </div>
 
         {!quantized && (
           <div className="border-b border-line bg-accent-2/10 px-5 py-3 text-[13px] text-accent-2">
-            We couldn't find a steady beat in this recording, so the bar lines are guesses.
-            The score may be hard to read.
+            {t("sheets_not_quantized")}
           </div>
         )}
 
@@ -108,7 +109,7 @@ export function SheetsDialog(props: {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] text-content">
-                  {describe(file.name)}
+                  {describe(file.name, t, instrumentLabel)}
                 </span>
                 <span className="block truncate font-mono text-[11px] text-faint">
                   {file.name}
@@ -131,9 +132,12 @@ export function SheetsDialog(props: {
             }}
           >
             <IconDownload />
-            Download all ({files.length} files, {formatSize(zipBlob.size)})
+            {t("sheets_download_all", {
+              n: files.length,
+              size: formatSize(zipBlob.size),
+            })}
           </Button>
-          <Button onClick={onClose}>Close</Button>
+          <Button onClick={onClose}>{t("close")}</Button>
         </div>
       </div>
     </div>
@@ -169,14 +173,18 @@ function mimeOf(name: string): string {
  * `score.musicxml`, or a numbered part like `02_electric_bass_tab.pdf`. Falls
  * back to the filename itself, so an unrecognized member still lists sensibly.
  */
-function describe(name: string): string {
-  if (name === "score.mid") return "MIDI file";
-  if (name === "score.musicxml") return "MusicXML score";
-  if (name === "full_score.pdf") return "Full score – every instrument";
+function describe(
+  name: string,
+  t: (key: string, params?: Record<string, string | number>) => string,
+  instrumentLabel: (id: string) => string,
+): string {
+  if (name === "score.mid") return t("sheets_midi_file");
+  if (name === "score.musicxml") return t("sheets_musicxml");
+  if (name === "full_score.pdf") return t("sheets_full_score");
   const part = name.match(/^\d+_(.+?)(_tab)?\.pdf$/);
   if (!part) return name;
-  const instrument = part[1].replace(/_/g, " ");
-  return instrument.charAt(0).toUpperCase() + instrument.slice(1) + (part[2] ? " — tablature" : "");
+  const instrument = instrumentLabel(part[1]);
+  return instrument + (part[2] ? t("sheets_tablature") : "");
 }
 
 function formatSize(bytes: number): string {

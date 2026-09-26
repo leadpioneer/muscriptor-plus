@@ -448,7 +448,23 @@ def serve(
     typer.echo("Loading model…")
     model = _load_model(model_path, _device, dtype)
     web_dir = Path(__file__).resolve().parent / "web_dist"
-    fastapi_app = create_app(model, web_dir=web_dir if web_dir.is_dir() else None)
+
+    def model_loader(size: str) -> TranscriptionModel:
+        """Build a model of a published size for POST /model swaps."""
+        from muscriptor.transcription_model import TranscriptionModel
+
+        return TranscriptionModel.load_model(
+            weights_path=size, device=_device, dtype=dtype
+        )
+
+    fastapi_app = create_app(
+        model,
+        web_dir=web_dir if web_dir.is_dir() else None,
+        model_loader=model_loader,
+        # GET /model reports the truth for size keywords and local paths alike;
+        # swapping to a published size works from either starting point.
+        model_size=model_path if model_path else "medium",
+    )
     uvicorn.run(fastapi_app, host=host, port=port)
 
 

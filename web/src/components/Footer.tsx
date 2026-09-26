@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { useI18n } from "../i18n";
 
 /** The Kyutai + Mirelo logos, shared by the header and the footer. */
 export function PartnerLogos({ className }: { className?: string }) {
@@ -25,11 +26,11 @@ export function PartnerLogos({ className }: { className?: string }) {
 }
 
 export function Footer() {
+  const { t } = useI18n();
   return (
     <footer className="mx-auto mt-4 flex max-w-7xl flex-wrap items-center justify-between gap-6 border-t border-line px-7 py-10 max-[760px]:flex-col max-[760px]:items-start">
       <p className="max-w-md text-muted">
-        MuScriptor is a multi-instrument automatic music transcription model:
-        it turns raw audio into per-instrument MIDI. Built by{" "}
+        {t("footer_about_pre")}{" "}
         <a
           href="https://kyutai.org/"
           target="_blank"
@@ -38,7 +39,7 @@ export function Footer() {
         >
           Kyutai
         </a>{" "}
-        and{" "}
+        {t("footer_and")}{" "}
         <a
           href="https://www.mirelo.ai/"
           target="_blank"

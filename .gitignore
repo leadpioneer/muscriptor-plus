@@ -10,7 +10,12 @@
 *.ogg
 *.sf2
 web/node_modules
-muscriptor/web_dist/
+muscriptor/web_dist
+# Local tooling (e.g. the FluidSynth Windows build under tools/) is not part
+# of the project.
+tools/
+serve_out.log
+serve_err.log
 web/tsconfig.tsbuildinfo
 /dist
 *.egg-info

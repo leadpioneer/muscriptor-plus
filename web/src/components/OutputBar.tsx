@@ -4,6 +4,7 @@ import { unzipSync } from "fflate";
 import { Button } from "./Button";
 import { SheetsDialog, type SheetFile } from "./SheetsDialog";
 import type { TranscriptionResult } from "../hooks/useTranscription";
+import { useI18n } from "../i18n";
 import { IconChevron, IconDownload } from "./icons";
 import { track } from "../analytics";
 
@@ -46,6 +47,7 @@ export function OutputBar(props: {
     currentFile,
     onTranscribeAnother,
   } = props;
+  const { t } = useI18n();
   // Label shown on the Download button while a server-side render runs, or null
   // when idle — the exports below all block the menu while they work.
   const [busy, setBusy] = useState<string | null>(null);
@@ -100,7 +102,7 @@ export function OutputBar(props: {
   async function downloadWav(mode: "synth" | "mix") {
     if (result === null || currentFile === null) return;
     track("download", { format: mode === "mix" ? "wav_mix" : "wav_synth" });
-    setBusy("Synthesizing…");
+    setBusy(t("synthesizing"));
     try {
       const form = new FormData();
       form.append("mode", mode);
@@ -120,7 +122,7 @@ export function OutputBar(props: {
         format: mode === "mix" ? "wav_mix" : "wav_synth",
         message: (e as Error).message,
       });
-      alert("Couldn't create the audio file: " + (e as Error).message);
+      alert(t("alert_wav_failed", { message: (e as Error).message }));
     } finally {
       setBusy(null);
     }
@@ -140,7 +142,7 @@ export function OutputBar(props: {
       setSheetsOpen(true);
       return;
     }
-    setBusy("Generating…");
+    setBusy(t("generating"));
     try {
       const form = new FormData();
       // Engrave the grid-snapped notes when the server managed to snap them:
@@ -168,7 +170,7 @@ export function OutputBar(props: {
       setSheetsOpen(true);
     } catch (e) {
       track("download_error", { format: "sheets", message: (e as Error).message });
-      alert("Couldn't engrave the sheet music: " + (e as Error).message);
+      alert(t("alert_sheets_failed", { message: (e as Error).message }));
     } finally {
       setBusy(null);
     }
@@ -192,7 +194,7 @@ export function OutputBar(props: {
             ref={progressLabelRef}
             className="shrink-0 whitespace-nowrap font-mono text-xs tabular-nums text-faint"
           >
-            estimating…
+            {t("estimating")}
           </span>
         </div>
       )}
@@ -208,7 +210,7 @@ export function OutputBar(props: {
             aria-expanded={menuOpen}
           >
             <IconDownload />
-            {busy ?? "Download"}
+            {busy ?? t("download")}
             <IconChevron
               className={clsx("transition-transform", menuOpen && "rotate-180")}
             />
@@ -239,46 +241,46 @@ export function OutputBar(props: {
                   download();
                 }}
               >
-                MIDI file
+                {t("download_midi")}
               </Button>
               <Button
                 kind="ghost"
                 pad="px-3 py-2"
                 role="menuitem"
                 className={menuItem}
-                title="Just the transcribed notes, played with a SoundFont (mono)"
+                title={t("download_wav_synth_title")}
                 onClick={() => {
                   setMenuOpen(false);
                   downloadWav("synth");
                 }}
               >
-                WAV - transcription only
+                {t("download_wav_synth")}
               </Button>
               <Button
                 kind="ghost"
                 pad="px-3 py-2"
                 role="menuitem"
                 className={menuItem}
-                title="Original audio (L) + transcribed notes played with a SoundFont (R)"
+                title={t("download_wav_mix_title")}
                 onClick={() => {
                   setMenuOpen(false);
                   downloadWav("mix");
                 }}
               >
-                WAV - stereo with original
+                {t("download_wav_mix")}
               </Button>
               <Button
                 kind="ghost"
                 pad="px-3 py-2"
                 role="menuitem"
                 className={menuItem}
-                title="Engraved notation: PDFs per instrument, tablature, MusicXML"
+                title={t("download_sheets_title")}
                 onClick={() => {
                   setMenuOpen(false);
                   downloadSheets();
                 }}
               >
-                Sheet music
+                {t("download_sheets")}
               </Button>
             </div>
           )}
@@ -289,7 +291,7 @@ export function OutputBar(props: {
             onTranscribeAnother();
           }}
         >
-          Transcribe another file
+          {t("transcribe_another")}
         </Button>
       </div>
 

@@ -12,6 +12,7 @@ MuseScore 4 or newer is required. MuseScore 3 writes a different project format
 """
 
 import base64
+import glob
 import json
 import os
 import platform
@@ -39,6 +40,14 @@ _APP_LOCATIONS = (
     "/Applications/MuseScore 3.app/Contents/MacOS/mscore",
     "~/MuseScore.AppImage",
     "~/Applications/MuseScore.AppImage",
+)
+# Windows installers drop MuseScore under Program Files (machine-wide) or
+# %LOCALAPPDATA%\Programs (per-user) and never add it to PATH, so the standard
+# install spots are probed directly (see _candidates).
+_WINDOWS_GLOBS = (
+    os.path.expandvars(r"%ProgramFiles%\MuseScore*\bin\MuseScore*.exe"),
+    os.path.expandvars(r"%ProgramFiles(x86)%\MuseScore*\bin\MuseScore*.exe"),
+    os.path.expandvars(r"%LOCALAPPDATA%\Programs\MuseScore*\bin\MuseScore*.exe"),
 )
 # Checked before anything else, for a MuseScore that isn't on PATH.
 MUSESCORE_ENV_VAR = "MUSCRIPTOR_MUSESCORE"
@@ -126,6 +135,9 @@ def _candidates() -> list[str]:
         path = Path(location).expanduser()
         if path.is_file():
             found.append(str(path))
+    if sys.platform == "win32":
+        for pattern in _WINDOWS_GLOBS:
+            found.extend(sorted(glob.glob(pattern)))
     return found
 
 

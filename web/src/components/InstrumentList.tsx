@@ -3,17 +3,17 @@ import clsx from "clsx";
 import type { AudioEngine } from "../audio";
 import { Button } from "./Button";
 import { instrumentColor, type PianoRoll } from "../pianoroll";
-import { label } from "../instruments";
+import { useI18n } from "../i18n";
 import { IconSound, IconSoundOff } from "./icons";
 
 /** A circled "?" that reveals an explanatory tooltip on hover/focus. */
-function HelpHint(props: { children: string }) {
+function HelpHint(props: { children: string; ariaLabel: string }) {
   return (
     <span className="group/help relative ml-1.5 inline-flex align-middle">
       <span
         tabIndex={0}
         className="flex size-4 cursor-help items-center justify-center rounded-full border border-line-strong text-[10px] font-semibold text-muted outline-none transition-colors duration-150 hover:border-accent hover:text-content focus-visible:border-accent focus-visible:text-content"
-        aria-label="What does this mean?"
+        aria-label={props.ariaLabel}
       >
         ?
       </span>
@@ -29,28 +29,33 @@ function HelpHint(props: { children: string }) {
 
 /** A given instrument that wasn't detected: gray, struck-through, no controls. */
 function UndetectedRow(props: { name: string }) {
+  const { t, instrumentLabel } = useI18n();
   return (
     <li className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-muted opacity-40 [animation:rise_0.4s_var(--ease-fluid)_both]">
       <span className="size-3 shrink-0 rounded-sm bg-faint" />
       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap line-through">
-        {label(props.name)}
+        {instrumentLabel(props.name)}
       </span>
-      <span className="shrink-0 text-xs italic text-faint">not detected</span>
+      <span className="shrink-0 text-xs italic text-faint">{t("not_detected")}</span>
     </li>
   );
 }
 
-/** An interactive detected instrument with mute + solo controls. */
+/** An interactive detected instrument with volume + mute + solo controls. */
 function InstrumentRow(props: {
   name: string;
   muted: boolean;
   soloed: boolean;
   onToggleMute: () => void;
   onToggleSolo: () => void;
+  onVolumeChange: (v: number) => void;
   /** Hovering the row spotlights this instrument's notes on the piano roll. */
   onHover: (name: string | null) => void;
 }) {
-  const { name, muted, soloed, onToggleMute, onToggleSolo, onHover } = props;
+  const { name, muted, soloed, onToggleMute, onToggleSolo, onVolumeChange, onHover } = props;
+  const { t, instrumentLabel } = useI18n();
+  // Local slider state; the engine holds the authoritative value per instrument.
+  const [volume, setVolume] = useState(1);
   return (
     <li
       className="group flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-muted transition-colors duration-150 ease-fluid hover:bg-white/[0.04] hover:text-content [animation:rise_0.4s_var(--ease-fluid)_both]"
@@ -68,10 +73,28 @@ function InstrumentRow(props: {
           style={{ background: instrumentColor(name) }}
         />
         <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-          {label(name)}
+          {instrumentLabel(name)}
         </span>
       </div>
       <div className="flex items-center gap-0.5">
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={volume}
+          disabled={muted}
+          title={t("volume_title", { name: instrumentLabel(name) })}
+          aria-label={t("volume_title", { name: instrumentLabel(name) })}
+          className="mix-slider w-16 shrink-0 opacity-70 transition-opacity hover:opacity-100"
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            setVolume(v);
+            onVolumeChange(v);
+          }}
+          onPointerUp={(e) => e.currentTarget.blur()}
+          onClick={(e) => e.currentTarget.blur()}
+        />
         <Button
           type="button"
           kind="ghost"
@@ -81,7 +104,7 @@ function InstrumentRow(props: {
               ? "text-accent-2 opacity-100"
               : "text-muted opacity-70 group-hover:opacity-100 hover:text-content",
           )}
-          title={soloed ? "Unsolo" : "Solo (mute everything else)"}
+          title={soloed ? t("unsolo_title") : t("solo_title")}
           aria-pressed={soloed}
           onClick={onToggleSolo}
         >
@@ -96,7 +119,7 @@ function InstrumentRow(props: {
               ? "text-red opacity-100"
               : "text-muted opacity-70 group-hover:opacity-100 hover:text-content",
           )}
-          title={muted ? "Unmute on MIDI track" : "Mute on MIDI track"}
+          title={muted ? t("unmute_title") : t("mute_title")}
           aria-pressed={muted}
           onClick={onToggleMute}
         >
@@ -114,6 +137,7 @@ export function InstrumentList(props: {
   rollRef: RefObject<PianoRoll | null>;
 }) {
   const { instruments, given, audio, rollRef } = props;
+  const { t } = useI18n();
   const [muted, setMuted] = useState<Set<string>>(() => new Set());
   const [soloed, setSoloed] = useState<string | null>(null);
 
@@ -153,6 +177,7 @@ export function InstrumentList(props: {
       soloed={soloed === name}
       onToggleMute={() => toggleMute(name)}
       onToggleSolo={() => toggleSolo(name)}
+      onVolumeChange={(v) => audio.setInstrumentVolume(name, v)}
       onHover={(n) => rollRef.current?.setHighlightedInstrument(n)}
     />
   );
@@ -167,10 +192,9 @@ export function InstrumentList(props: {
       {hasGiven ? (
         <>
           <h2 className="m-0 mb-3 flex items-center text-base font-semibold">
-            Instruments
-            <HelpHint>
-              The instruments you specified. Greyed-out ones weren't detected in
-              the audio.
+            {t("instruments")}
+            <HelpHint ariaLabel={t("help_aria")}>
+              {t("instruments_given_hint")}
             </HelpHint>
           </h2>
           <ul className="m-0 flex list-none flex-col gap-0.5 p-0 text-sm">
@@ -187,10 +211,9 @@ export function InstrumentList(props: {
           {extra.length > 0 && (
             <>
               <h2 className="m-0 mb-3 mt-5 text-base font-semibold">
-                More instruments{" "}
-                <HelpHint>
-                  More instruments that the model detected in the audio, even
-                  without them being explicitly given.
+                {t("more_instruments")}{" "}
+                <HelpHint ariaLabel={t("help_aria")}>
+                  {t("more_instruments_hint")}
                 </HelpHint>
               </h2>
               <ul className="m-0 flex list-none flex-col gap-0.5 p-0 text-sm">
@@ -201,7 +224,7 @@ export function InstrumentList(props: {
         </>
       ) : (
         <>
-          <h2 className="m-0 mb-3 text-base font-semibold">Instruments</h2>
+          <h2 className="m-0 mb-3 text-base font-semibold">{t("instruments")}</h2>
           <ul className="m-0 flex list-none flex-col gap-0.5 p-0 text-sm">
             {instruments.map(row)}
           </ul>

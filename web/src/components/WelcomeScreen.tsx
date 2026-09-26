@@ -8,9 +8,9 @@ import {
 import clsx from "clsx";
 import { Button } from "./Button";
 import { ConditioningPanel } from "./ConditioningPanel";
+import { MidiToSheets } from "./MidiToSheets";
+import { useI18n } from "../i18n";
 import type { AppError, SubmitState } from "../App";
-
-const SERVER_DOWN = "The muscriptor server is temporarily unavailable.";
 
 /** Whole seconds left until `at` (a `Date.now()` timestamp), or null when
  *  there's nothing to count down to. Re-renders on a sub-second interval so the
@@ -27,14 +27,18 @@ function useCountdown(at: number | null): number | null {
 
 /** Label for the CTA, which doubles as the status readout while an upload is
  *  waiting to be accepted (see `SubmitState`). */
-function transcribeLabel(submitState: SubmitState, retryIn: number | null): string {
-  if (submitState.phase === "submitting") return "Transcribing…";
+function transcribeLabel(
+  submitState: SubmitState,
+  retryIn: number | null,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  if (submitState.phase === "submitting") return t("transcribing");
   if (submitState.phase === "busy") {
     return retryIn === null || retryIn === 0
-      ? "Servers busy, retrying…"
-      : `Servers busy, retrying in ${retryIn}s`;
+      ? t("servers_busy")
+      : t("servers_busy_in", { n: retryIn });
   }
-  return "Transcribe";
+  return t("transcribe");
 }
 
 /**
@@ -78,6 +82,7 @@ export function WelcomeScreen(props: {
   const [loadingExample, setLoadingExample] = useState(false);
   const retryIn = useCountdown(submitState.phase === "busy" ? submitState.retryAt : null);
   const submitting = submitState.phase !== "idle";
+  const { t } = useI18n();
 
   // Probe the server on mount. A failure swaps the file picker for a
   // server-down notice; success clears a stale server-down notice so the user
@@ -91,22 +96,22 @@ export function WelcomeScreen(props: {
       .then((r) => {
         if (cancelled) return;
         if (r.ok) clearServerError();
-        else setError({ kind: "server", message: SERVER_DOWN });
+        else setError({ kind: "server", message: t("server_down_full") });
       })
       .catch(() => {
-        if (!cancelled) setError({ kind: "server", message: SERVER_DOWN });
+        if (!cancelled) setError({ kind: "server", message: t("server_down_full") });
       });
     return () => {
       cancelled = true;
     };
-  }, [setError]);
+  }, [setError, t]);
 
   async function handleExample() {
     setLoadingExample(true);
     try {
       await onUseExample();
     } catch (e) {
-      alert("Couldn't load the example file: " + (e as Error).message);
+      alert(t("alert_example_failed", { message: (e as Error).message }));
     } finally {
       setLoadingExample(false);
     }
@@ -115,10 +120,7 @@ export function WelcomeScreen(props: {
   return (
     <main className="mx-auto flex max-w-3xl flex-col gap-4 px-7 pb-12 pt-2 animate-rise [animation-delay:0.06s]">
       <p className="text-base leading-relaxed text-muted">
-        MuScriptor is the best open model for multi-instrument transcription to
-        date. Give it a recording: pop, classical, metal, jazz, whatever, and
-        it transcribes the notes played by every instrument into MIDI and sheet
-        music, for you to download or explore interactively.
+        {t("welcome_intro")}
       </p>
       {/* Explicit extensions alongside the wildcard, needed for iOS Safari
        * which sometimes grays out perfectly valid audio files otherwise. */}
@@ -139,7 +141,7 @@ export function WelcomeScreen(props: {
         {error?.kind === "server" ? (
           <div className="flex flex-col items-center gap-3 px-8 py-16 text-center">
             <p className="m-0 font-serif text-5xl leading-none text-content">
-              unavailable
+              {t("server_unavailable")}
             </p>
             <p className="m-0 max-w-md text-base text-muted">{error.message}</p>
           </div>
@@ -148,12 +150,12 @@ export function WelcomeScreen(props: {
             <div className="wave-mark h-16 w-32 bg-accent" aria-hidden="true" />
             <p className="m-0 text-base text-muted">
               {dragging ? (
-                <span className="font-semibold text-content">Drop anywhere</span>
+                <span className="font-semibold text-content">{t("drop_anywhere")}</span>
               ) : (
                 <>
-                  Drop an{" "}
-                  <strong className="font-semibold text-content">audio file</strong> here,
-                  or
+                  {t("drop_audio_here")}{" "}
+                  <strong className="font-semibold text-content">{t("drop_audio_here_strong")}</strong>{" "}
+                  {t("drop_audio_here_tail")}
                 </>
               )}
             </p>
@@ -163,7 +165,7 @@ export function WelcomeScreen(props: {
               className="rounded-xl border-transparent bg-content font-semibold text-[#15151b] hover:border-transparent hover:bg-white"
               onClick={() => fileInputRef.current?.click()}
             >
-              Select an audio file
+              {t("select_audio")}
             </Button>
             <Button
               kind="ghost"
@@ -171,8 +173,9 @@ export function WelcomeScreen(props: {
               onClick={handleExample}
               disabled={loadingExample}
             >
-              {loadingExample ? "Loading example…" : "or try an example track"}
+              {loadingExample ? t("loading_example") : t("try_example")}
             </Button>
+            <MidiToSheets />
           </div>
         ) : (
           <div className="flex flex-col items-start gap-2.5 px-8 py-7">
@@ -183,7 +186,7 @@ export function WelcomeScreen(props: {
               {selectedFile.name}
             </p>
             <Button onClick={() => fileInputRef.current?.click()}>
-              Choose a different file
+              {t("choose_different")}
             </Button>
           </div>
         )}
@@ -217,7 +220,7 @@ export function WelcomeScreen(props: {
               // The label changes as we wait, so announce it to screen readers.
               aria-live="polite"
             >
-              {transcribeLabel(submitState, retryIn)}
+              {transcribeLabel(submitState, retryIn, t)}
             </Button>
           </div>
         </>

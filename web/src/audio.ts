@@ -96,7 +96,15 @@ export class AudioEngine {
   private wavPanner: StereoPannerNode;
   private midiPanner: StereoPannerNode;
   private mutedInstruments = new Set<string>();
-  private mix = 0.75; // 0 = full WAV, 1 = full MIDI
+  /** Per-instrument playback volume (linear gain), persisted across playbacks. */
+  private instrumentVolumes = new Map<string, number>();
+  /** Independent bus volumes: 0..1 each (replaces the old crossfade). */
+  private wavVol = 0.25;
+  private midiVol = 0.75;
+  /** Master output volume, applied after both buses. */
+  private master = 1;
+  /** Final stage before the destination, shared by both buses. */
+  private masterGain: GainNode;
   /** When true: original audio hard-left, synthesis hard-right (mix ignored). */
   private stereo = false;
 
@@ -105,14 +113,17 @@ export class AudioEngine {
     // gesture needed. The synth and soundfont can load while suspended;
     // we only need to call Tone.start() to *resume* it on the play click.
     this.ctx = Tone.getContext().rawContext as AudioContext;
-    // Each bus runs gain → panner → destination so we can both crossfade
-    // (gain) and place the two sources L/R (pan) independently.
+    // Each bus runs gain → panner → master gain → destination, so we can
+    // crossfade/level (bus gain), place the two sources L/R (pan) and set a
+    // master volume (masterGain) independently.
+    this.masterGain = this.ctx.createGain();
+    this.masterGain.connect(this.ctx.destination);
     this.midiPanner = this.ctx.createStereoPanner();
-    this.midiPanner.connect(this.ctx.destination);
+    this.midiPanner.connect(this.masterGain);
     this.midiGain = this.ctx.createGain();
     this.midiGain.connect(this.midiPanner);
     this.wavPanner = this.ctx.createStereoPanner();
-    this.wavPanner.connect(this.ctx.destination);
+    this.wavPanner.connect(this.masterGain);
     this.wavGain = this.ctx.createGain();
     this.wavGain.connect(this.wavPanner);
     this.initSynth().catch((e) => {
@@ -172,10 +183,22 @@ export class AudioEngine {
     this.applyMix();
   }
 
-  /** Set the MIDI/WAV crossfade. `midiAmount` in [0, 1]. */
-  setMix(midiAmount: number) {
-    this.mix = Math.max(0, Math.min(1, midiAmount));
+  /** Set the original-audio bus volume. `v` in [0, 1]. */
+  setWavVolume(v: number) {
+    this.wavVol = Math.max(0, Math.min(1, v));
     this.applyMix();
+  }
+
+  /** Set the MIDI-synthesis bus volume. `v` in [0, 1]. */
+  setMidiVolume(v: number) {
+    this.midiVol = Math.max(0, Math.min(1, v));
+    this.applyMix();
+  }
+
+  /** Set the master output volume. `v` in [0, 1]. */
+  setMasterVolume(v: number) {
+    this.master = Math.max(0, Math.min(1, v));
+    this.masterGain.gain.setTargetAtTime(this.master, this.ctx.currentTime, 0.01);
   }
 
   /** Toggle stereo split: original → left, synthesis → right. Overrides mix. */
@@ -191,15 +214,15 @@ export class AudioEngine {
       // its L+R into one channel (up to +6 dB), so halve the gain of stereo
       // sources to stay at roughly the level they have in mix mode. Mono
       // sources pass through a hard pan at unity, so they need no trim.
-      const wavLevel = this.wavBuffer?.numberOfChannels === 1 ? 1 : 0.5;
-      this.wavGain.gain.setTargetAtTime(wavLevel, t, 0.01);
-      this.midiGain.gain.setTargetAtTime(0.5, t, 0.01); // synth is stereo
+      const base = this.wavBuffer?.numberOfChannels === 1 ? 1 : 0.5;
+      this.wavGain.gain.setTargetAtTime(base * this.wavVol, t, 0.01);
+      this.midiGain.gain.setTargetAtTime(0.5 * this.midiVol, t, 0.01); // synth is stereo
       this.wavPanner.pan.setTargetAtTime(-1, t, 0.01);
       this.midiPanner.pan.setTargetAtTime(1, t, 0.01);
     } else {
-      // Centered crossfade between the two buses.
-      this.wavGain.gain.setTargetAtTime(1 - this.mix, t, 0.01);
-      this.midiGain.gain.setTargetAtTime(this.mix, t, 0.01);
+      // Both buses centered at their own volumes.
+      this.wavGain.gain.setTargetAtTime(this.wavVol, t, 0.01);
+      this.midiGain.gain.setTargetAtTime(this.midiVol, t, 0.01);
       this.wavPanner.pan.setTargetAtTime(0, t, 0.01);
       this.midiPanner.pan.setTargetAtTime(0, t, 0.01);
     }
@@ -220,6 +243,10 @@ export class AudioEngine {
     }
     if (this.mutedInstruments.has(instrument)) {
       synth.midiChannels[ch]?.setSystemParameter("isMuted", true);
+    }
+    const vol = this.instrumentGain(instrument);
+    if (vol !== 1) {
+      synth.midiChannels[ch]?.setSystemParameter("gain", vol);
     }
     this.channels.set(instrument, ch);
     return ch;
@@ -278,6 +305,20 @@ export class AudioEngine {
     if (ch !== undefined) {
       this.synth?.midiChannels[ch]?.setSystemParameter("isMuted", muted);
     }
+  }
+
+  /** Set a single instrument's playback volume (linear gain). Works live. */
+  setInstrumentVolume(instrument: string, volume: number) {
+    const v = Math.max(0, Math.min(1, volume));
+    this.instrumentVolumes.set(instrument, v);
+    const ch = this.channels.get(instrument);
+    if (ch !== undefined) {
+      this.synth?.midiChannels[ch]?.setSystemParameter("gain", v);
+    }
+  }
+
+  private instrumentGain(instrument: string): number {
+    return this.instrumentVolumes.get(instrument) ?? 1;
   }
 
   private startWavSource(at: number) {
@@ -415,6 +456,7 @@ export class AudioEngine {
     this.wavBuffer = null;
     // The instrument list is rebuilt from scratch, so unmute everything.
     this.mutedInstruments.clear();
+    this.instrumentVolumes.clear();
     for (const ch of this.channels.values()) {
       this.synth?.midiChannels[ch]?.setSystemParameter("isMuted", false);
     }

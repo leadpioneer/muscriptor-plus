@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { Button } from "./Button";
-import { label, scoreInstrument } from "../instruments";
+import { scoreInstrument } from "../instruments";
+import { useI18n } from "../i18n";
 
 /**
  * Conditioning instruments: optional pre-selection that overrides the model's
@@ -16,6 +17,7 @@ export function ConditioningPanel(props: {
   onChange: (next: Set<string>) => void;
 }) {
   const { selected, onChange } = props;
+  const { t, instrumentLabel } = useI18n();
   const [available, setAvailable] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -105,11 +107,10 @@ export function ConditioningPanel(props: {
       <div className="mb-3.5 flex items-start gap-3">
         <div className="flex flex-col gap-2">
           <h2 className="m-0 text-lg font-semibold">
-            What instruments are there in this track?
+            {t("cond_title")}
           </h2>
           <p className="text-faint">
-            Optional. Leave empty to let the model detect anything; listing
-            instruments here forbids every other instrument from appearing.
+            {t("cond_hint")}
           </p>
         </div>
         <div className="ml-auto">
@@ -120,7 +121,7 @@ export function ConditioningPanel(props: {
             onClick={() => onChange(new Set())}
             disabled={selected.size === 0}
           >
-            Clear
+            {t("cond_clear")}
           </Button>
         </div>
       </div>
@@ -135,12 +136,12 @@ export function ConditioningPanel(props: {
               className="inline-flex select-none items-center gap-1.5 rounded-md border border-accent-glow bg-accent-soft py-1 pl-3 pr-1.5 text-sm text-content"
               key={name}
             >
-              {label(name)}
+              {instrumentLabel(name)}
               <Button
                 type="button"
                 kind="ghost"
                 className="grid size-4 place-content-center rounded text-sm leading-none text-muted hover:bg-white/10 hover:text-content"
-                aria-label={`Remove ${label(name)}`}
+                aria-label={t("cond_remove", { name: instrumentLabel(name) })}
                 onClick={(e) => {
                   e.stopPropagation();
                   remove(name);
@@ -153,7 +154,7 @@ export function ConditioningPanel(props: {
           <input
             type="text"
             className="m-0 min-w-32 flex-1 border-none bg-transparent px-0.5 py-1 font-sans text-sm text-content outline-none placeholder:text-faint"
-            placeholder={selected.size === 0 ? "Add an instrument…" : ""}
+            placeholder={selected.size === 0 ? t("cond_placeholder") : ""}
             value={query}
             autoComplete="off"
             spellCheck={false}
@@ -187,7 +188,7 @@ export function ConditioningPanel(props: {
                   add(name);
                 }}
               >
-                {label(name)}
+                {instrumentLabel(name)}
               </li>
             ))}
           </ul>

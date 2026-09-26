@@ -17,7 +17,9 @@ import { Footer, PartnerLogos } from "./components/Footer";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { ConsentBanner } from "./components/ConsentBanner";
 import { Faq } from "./components/Faq";
+import { ModelSwitcher } from "./components/ModelSwitcher";
 import { track } from "./analytics";
+import { useI18n, LanguageSwitcher } from "./i18n";
 
 /**
  * A failure surfaced on the welcome screen. `server` means the backend is
@@ -62,6 +64,7 @@ const EXAMPLE = {
 
 export function App() {
   const audio = useAudioEngine();
+  const { t } = useI18n();
   const rollRef = useRef<PianoRoll | null>(null);
   const clockRef = useRef<HTMLSpanElement | null>(null);
   // Progress estimator (stable across renders) + the DOM nodes its smoothed
@@ -83,7 +86,9 @@ export function App() {
   // The finished transcription's exports
   const [result, setResult] = useState<TranscriptionResult | null>(null);
   const [currentFile, setCurrentFile] = useState<File | null>(null);
-  const [mix, setMix] = useState(0.75);
+  const [wavVol, setWavVol] = useState(0.25);
+  const [midiVol, setMidiVol] = useState(0.75);
+  const [masterVol, setMasterVol] = useState(1);
   const [stereo, setStereo] = useState(false);
   const [userScrolled, setUserScrolled] = useState(false);
   const [condSelected, setCondSelected] = useState<Set<string>>(() => new Set());
@@ -182,7 +187,7 @@ export function App() {
   // "Transcribe another file" (also the wordmark, on the transcribe screen):
   // confirm (the work is about to be discarded), then tear down and go back.
   function transcribeAnother() {
-    if (!window.confirm("Discard this transcription and start over?")) return;
+    if (!window.confirm(t("confirm_discard"))) return;
     setSelectedFile(null);
     resetToWelcome();
   }
@@ -208,7 +213,7 @@ export function App() {
     // first, then tear everything down (stop playback, clear the roll) so the
     // music doesn't keep playing behind the welcome screen.
     if (screen === "transcribe") {
-      if (!window.confirm("Discard this transcription and start over with the dropped file?"))
+      if (!window.confirm(t("confirm_discard_dropped")))
         return;
       resetToWelcome();
     }
@@ -323,7 +328,7 @@ export function App() {
           if (dur > 0) {
             let text = `${formatClock(frac * dur)}/${formatClock(dur)}`;
             const eta = progress.etaMs(now);
-            if (eta != null) text += `   done in ${formatClock(eta / 1000)}`;
+            if (eta != null) text += `В В В ${t("done_in", { time: formatClock(eta / 1000) })}`;
             progressLabelRef.current.textContent = text;
           } else {
             progressLabelRef.current.textContent = "";
@@ -334,12 +339,12 @@ export function App() {
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [audio]);
+  }, [audio, t]);
 
   // Expose for browser-devtools debugging.
   useEffect(() => {
     (window as unknown as { __mu: unknown }).__mu = { audio, rollRef };
-  }, [audio]);
+  }, [audio, t]);
 
   return (
     <>
@@ -365,7 +370,7 @@ export function App() {
           }
           role={screen === "transcribe" ? "button" : undefined}
           tabIndex={screen === "transcribe" ? 0 : undefined}
-          title={screen === "transcribe" ? "Transcribe another file" : undefined}
+          title={screen === "transcribe" ? t("transcribe_another") : undefined}
         >
           <img
             src="/muscriptor-logo-v4.svg"
@@ -375,11 +380,13 @@ export function App() {
           />
           <div className="flex flex-col gap-1">
             <span className="text-[clamp(2.3rem,6vw,3rem)] font-bold leading-none text-white">MuScriptor</span>
-            <span className="text-sm text-muted">
-              Music to MIDI and sheet music
-            </span>
+            <span className="text-sm text-muted">{t("tagline")}</span>
           </div>
         </div>
+
+        <LanguageSwitcher className="self-center" />
+
+        <ModelSwitcher />
 
         {/* Also in the footer; here it's decoration, so it goes away on narrow
             screens rather than wrapping under the wordmark. */}
@@ -409,10 +416,20 @@ export function App() {
           <Controls
             audio={audio}
             clockRef={clockRef}
-            mix={mix}
-            onMixChange={(v) => {
-              setMix(v);
-              audio.setMix(v);
+            wavVol={wavVol}
+            onWavVolChange={(v) => {
+              setWavVol(v);
+              audio.setWavVolume(v);
+            }}
+            midiVol={midiVol}
+            onMidiVolChange={(v) => {
+              setMidiVol(v);
+              audio.setMidiVolume(v);
+            }}
+            masterVol={masterVol}
+            onMasterVolChange={(v) => {
+              setMasterVol(v);
+              audio.setMasterVolume(v);
             }}
             stereo={stereo}
             onStereoChange={(v) => {

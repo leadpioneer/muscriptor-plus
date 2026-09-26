@@ -113,8 +113,24 @@ def event_to_dict(ev: NoteStartEvent | NoteEndEvent) -> dict:
     }
 
 
-def create_app(model: TranscriptionModel, web_dir: str | Path | None = None) -> FastAPI:
+def create_app(
+    model: TranscriptionModel,
+    web_dir: str | Path | None = None,
+    model_loader: Callable[[str], TranscriptionModel] | None = None,
+    model_size: str = "medium",
+) -> FastAPI:
     app = FastAPI(title="muscriptor")
+
+    # Mutable model holder: POST /model swaps the live model in place. Every
+    # endpoint reads the current model through this dict, so a swap is atomic
+    # from the request handlers' point of view (dict item assignment under the
+    # GIL); swaps only happen between requests, guarded by the transcribe lock.
+    model_state = {
+        "model": model,
+        "size": model_size,
+        "status": "ready",  # "ready" | "loading" | "error"
+        "error": None,
+    }
 
     transcribe_lock = threading.Lock()
     # State of the run currently holding the lock (or the last one to have held
@@ -266,7 +282,7 @@ def create_app(model: TranscriptionModel, web_dir: str | Path | None = None) -> 
                 # generated, instead of waiting for a whole batch of chunks.
                 # no_eos_is_ok=True so one runaway chunk that never emits EOS only
                 # warns (and keeps its notes) instead of aborting the whole stream.
-                for ev in model.transcribe(
+                for ev in model_state["model"].transcribe(
                     (wav, sr),
                     instruments=instruments or None,
                     batch_size=1,
@@ -299,7 +315,7 @@ def create_app(model: TranscriptionModel, web_dir: str | Path | None = None) -> 
                     return
                 # Detect tempo/meter only now: it costs a few seconds of CPU and
                 # nothing before this point needs it, so the notes stream first.
-                grid = model.detect_beat_grid_for((wav, sr), detect_tempo)
+                grid = model_state["model"].detect_beat_grid_for((wav, sr), detect_tempo)
                 # Measure the onset lag up here rather than leaving it to the MIDI
                 # writing, since the UI has to be told the very same number to move
                 # the notes it already drew.
@@ -311,12 +327,12 @@ def create_app(model: TranscriptionModel, web_dir: str | Path | None = None) -> 
                             if isinstance(ev, NoteStartEvent)
                         ]
                     )
-                midi_bytes = model.events_to_midi_bytes(iter(events), beat_grid=grid)
+                midi_bytes = model_state["model"].events_to_midi_bytes(iter(events), beat_grid=grid)
                 midi_b64 = base64.b64encode(midi_bytes).decode("ascii")
                 # A second copy with the notes snapped to the beat grid. Useful for
                 # writing sheet music where we want "idealized" timing
                 quantized_midi = (
-                    model.events_to_midi_bytes(
+                    model_state["model"].events_to_midi_bytes(
                         iter(events), beat_grid=grid, quantize=True
                     )
                     if grid is not None and grid.beat_subdivision is not None
@@ -414,7 +430,7 @@ def create_app(model: TranscriptionModel, web_dir: str | Path | None = None) -> 
         )
         try:
             midi_bytes, _ = await asyncio.to_thread(
-                model.transcribe_and_postprocess,
+                model_state["model"].transcribe_and_postprocess,
                 (wav, sr),
                 instruments=instruments or None,
                 detect_tempo=detect_tempo,
@@ -529,6 +545,77 @@ def create_app(model: TranscriptionModel, web_dir: str | Path | None = None) -> 
                 "Content-Disposition": f'attachment; filename="{SHEETS_ZIP_NAME}"'
             },
         )
+
+    @app.get("/model")
+    async def get_model() -> dict:
+        """Current model size keyword and swap status."""
+        return {
+            "model": model_state["size"],
+            "status": model_state["status"],
+            "error": model_state["error"],
+        }
+
+    @app.post("/model")
+    async def switch_model(size: Annotated[str, Form()]) -> dict:
+        """Load another model size and make it the live one.
+
+        Runs in a background thread (weights download + load take a while);
+        while it runs, transcriptions and further swaps are refused with 409.
+        Requires the server to have been started with a size-keyword model —
+        a server running a local file path can't switch to published sizes.
+        """
+        if model_loader is None:
+            raise HTTPException(
+                status_code=501,
+                detail="model switching is not available on this server",
+            )
+        size = size.strip().lower()
+        if size not in ("small", "medium", "large"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown model size: {size!r} (small, medium or large)",
+            )
+        if model_state["status"] == "loading":
+            raise HTTPException(
+                status_code=409, detail="a model is already being loaded"
+            )
+        if transcribe_lock.locked():
+            raise HTTPException(
+                status_code=409,
+                detail="a transcription is in progress; try again when it finishes",
+            )
+        if size == model_state["size"] and model_state["status"] == "ready":
+            return {"model": size, "status": "ready"}
+
+        def load() -> None:
+            try:
+                new_model = model_loader(size)
+                old = model_state["model"]
+                model_state["model"] = new_model
+                model_state["size"] = size
+                model_state["status"] = "ready"
+                model_state["error"] = None
+                # Free the old model's GPU memory promptly: dropping the last
+                # reference doesn't return the cached CUDA blocks to the driver
+                # unless the allocator is told to.
+                del old
+                try:
+                    import gc
+
+                    import torch
+
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+            except Exception as e:  # noqa: BLE001 — surfaced to the client
+                model_state["status"] = "error"
+                model_state["error"] = str(e)
+
+        model_state["status"] = "loading"
+        model_state["error"] = None
+        threading.Thread(target=load, daemon=True).start()
+        return {"model": model_state["size"], "status": "loading"}
 
     if web_dir is not None:
         web_path = Path(web_dir)

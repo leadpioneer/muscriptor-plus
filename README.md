@@ -9,6 +9,13 @@ It turns a recording into MIDI and into sheet music.
 It's the most accurate open-source transcription model.
 You can use the model [here](https://muscriptor.kyutai.org) or self-host it using this repository.
 
+> **This fork** (`leadpioneer/muscriptor-plus`) adds, on top of upstream:
+> a bilingual web UI (English / Russian, switcher in the header), volume controls
+> (master, per-source and per-instrument), live model switching from the web UI,
+> engraving any MIDI file to sheet music from the welcome screen, and Windows
+> quality-of-life fixes (automatic MuseScore detection, GPU (cu128) torch on
+> Windows). See [QUICKSTART.md](QUICKSTART.md) for a quick bilingual setup guide.
+
 
 [Use it](https://muscriptor.kyutai.org) | [Paper](https://arxiv.org/abs/2607.08168v1) | [HuggingFace](https://huggingface.co/MuScriptor)
 
@@ -142,6 +149,25 @@ weights are downloaded and cached automatically. The architecture is a transform
 speed/accuracy trade-off, and `large` is the most accurate but really wants a
 GPU. On Apple Silicon the model runs on Metal (MPS) automatically.
 
+In the web UI the model can be switched live from the header dropdown
+(`small` / `medium` / `large`): new weights load in the background, the swap is
+refused while a transcription is running, and the previous model's GPU memory
+is freed. Weights are downloaded once and cached.
+
+### Windows specifics
+
+- **GPU (torch)**: PyPI's default Windows torch wheel is CPU-only, so this
+  fork pins torch to PyTorch's `cu128` index on Windows (required by RTX 50xx,
+  fine for older NVIDIA cards). `uv sync` handles it automatically.
+- **Console encoding**: when running the server with redirected output, set
+  `PYTHONUTF8=1` — otherwise debug prints can crash on non-ASCII characters
+  under the cp1251 codepage.
+- **MuseScore** (sheet music): standard install locations
+  (`C:\Program Files\MuseScore 4\bin\…`, per-user installs) are probed
+  automatically; for anything unusual set `MUSCRIPTOR_MUSESCORE`.
+- **FluidSynth** (WAV export): must be on PATH; an unpacked official Windows
+  build under `tools/fluidsynth` (gitignored) added to PATH works well.
+
 ## Developing
 
 To set up for development, get [uv](https://docs.astral.sh/uv/getting-started/installation/),
@@ -149,7 +175,6 @@ clone this repo and run:
 ```bash
 uv sync
 ```
-
 For the web UI, you also need [pnpm](https://pnpm.io/installation) and Node
 (can be installed [via pnpm](https://pnpm.io/cli/runtime)).
 Then run:
