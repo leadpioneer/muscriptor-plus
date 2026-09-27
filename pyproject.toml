@@ -55,6 +55,19 @@ dependencies = [
     "python-multipart>=0.0.29",
     "soundfile>=0.14.0",
     "beat-this>=1.1",  # Tempo and downbeat tracking
+    # Optional lead-vocal removal before transcription (MuScriptor Plus).
+    # The [cpu] extra supplies the onnxruntime that audio_separator's module
+    # imports unconditionally (the RoFormer models we use run on torch, so the
+    # CPU build suffices; the [gpu] extra would pull onnxruntime-gpu whose CUDA
+    # DLLs can clash with the cu128 torch build).
+    # Excluded on Intel macs: audio-separator needs torch>=2.3 / numpy>=2,
+    # which the Intel-mac compat pin below (torch<2.3, numpy<2) forbids —
+    # there the preprocessor reports the missing dependency as a clear error.
+    "audio-separator[cpu]>=0.44,<0.48 ; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    # audio_separator's bundled uvr_lib imports audioread directly, but the
+    # package metadata doesn't declare it (librosa >=0.10 dropped it) — declare
+    # it here so the import works. Same platform scope as audio-separator.
+    "audioread>=3 ; sys_platform != 'darwin' or platform_machine != 'x86_64'",
 ]
 
 [project.urls]

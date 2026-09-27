@@ -183,6 +183,37 @@ export class AudioEngine {
     this.applyMix();
   }
 
+  /**
+   * Decode `blob` and swap it in as the audible original-audio track.
+   *
+   * Used to point the preview at a separation stem (instrumental / vocals)
+   * after a vocal-removal run. Returns false when the blob isn't decodable —
+   * the previously loaded buffer keeps playing in that case.
+   */
+  async loadWavBlob(blob: Blob): Promise<boolean> {
+    try {
+      const buffer = await this.ctx.decodeAudioData(await blob.arrayBuffer());
+      this.swapWavBuffer(buffer);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Replace the WAV buffer live, continuing playback from the current
+   * position. Safe mid-playback: stem lengths and timelines match the original
+   * mix, so the only audible effect is the changed source itself.
+   */
+  swapWavBuffer(buffer: AudioBuffer) {
+    const wasPlaying = Tone.getTransport().state === "started";
+    this.stopWavSource();
+    this.wavBuffer = buffer;
+    // The stereo-mode WAV level depends on the buffer's channel count.
+    this.applyMix();
+    if (wasPlaying) this.startWavSource(Tone.now());
+  }
+
   /** Set the original-audio bus volume. `v` in [0, 1]. */
   setWavVolume(v: number) {
     this.wavVol = Math.max(0, Math.min(1, v));

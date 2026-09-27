@@ -14,6 +14,13 @@ for /f "delims=" %%F in ('dir /b /s "tools\fluidsynth\*fluidsynth.exe" 2^>nul') 
 )
 if defined FS_BIN set "PATH=%FS_BIN%;%PATH%"
 
+:: ---- ffmpeg (удаление ведущего вокала) — просто предупредить, если нет ----
+where ffmpeg >nul 2>nul
+if errorlevel 1 (
+    echo   [!] ffmpeg не найден в PATH — удаление ведущего вокала будет недоступно.
+    echo       Установите: winget install Gyan.FFmpeg, затем откройте новую консоль.
+)
+
 :: ---- Модель по умолчанию: из model.txt, иначе medium --------------------
 set "MODEL=medium"
 if exist model.txt set /p MODEL=<model.txt

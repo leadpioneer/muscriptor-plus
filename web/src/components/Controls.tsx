@@ -1,6 +1,7 @@
 import { useEffect, useState, type RefObject } from "react";
 import clsx from "clsx";
 import type { AudioEngine } from "../audio";
+import type { PreviewSource } from "../App";
 import { useI18n } from "../i18n";
 import { Button } from "./Button";
 import { IconPlay, IconPause } from "./icons";
@@ -46,6 +47,11 @@ export function Controls(props: {
   onMasterVolChange: (v: number) => void;
   stereo: boolean;
   onStereoChange: (v: boolean) => void;
+  /** Which audio the "Original" bus plays. Only offered after a vocal-removal
+   *  run, where the stems let the preview follow the transcription source. */
+  previewSource: PreviewSource;
+  onPreviewSourceChange: (source: PreviewSource) => void;
+  showPreviewSource: boolean;
   /** Whether the roll auto-follows the playhead (toggled off by manual scrolling). */
   following: boolean;
   onToggleFollow: () => void;
@@ -61,6 +67,9 @@ export function Controls(props: {
     onMasterVolChange,
     stereo,
     onStereoChange,
+    previewSource,
+    onPreviewSourceChange,
+    showPreviewSource,
     following,
     onToggleFollow,
   } = props;
@@ -112,7 +121,27 @@ export function Controls(props: {
       </span>
       <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-2 max-[760px]:ml-0">
         <VolumeSlider label={t("volume_master")} value={masterVol} onChange={onMasterVolChange} />
-        <VolumeSlider label={t("volume_original")} value={wavVol} onChange={onWavVolChange} />
+        <div className="inline-flex flex-col items-start gap-1">
+          <div className="flex items-center gap-2">
+            <VolumeSlider label={t("volume_original")} value={wavVol} onChange={onWavVolChange} />
+            {showPreviewSource && (
+              <select
+                className="cursor-pointer rounded-md border border-line-strong bg-surface-2 px-1.5 py-1 text-xs text-content outline-none"
+                aria-label={t("source_title")}
+                title={t("source_title")}
+                value={previewSource}
+                onChange={(e) => {
+                  onPreviewSourceChange(e.target.value as PreviewSource);
+                  e.currentTarget.blur();
+                }}
+              >
+                <option value="original">{t("source_original")}</option>
+                <option value="instrumental">{t("source_instrumental")}</option>
+                <option value="vocals">{t("source_vocals")}</option>
+              </select>
+            )}
+          </div>
+        </div>
         <VolumeSlider label={t("volume_midi")} value={midiVol} onChange={onMidiVolChange} />
         <label className="inline-flex cursor-pointer select-none items-center gap-1.5 text-sm text-muted px-3">
           <input

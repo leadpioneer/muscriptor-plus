@@ -21,17 +21,30 @@ POST /sheets takes a MIDI upload instead of audio (the `quantized_midi` from
 `muscriptor.utils.sheets.write_sheets` engraves from it — MusicXML, the full
 score, one PDF per instrument — as a single uncompressed zip. It needs
 MuseScore 4+ on the server, and answers 503 when there is none.
+
+POST /transcribe and /transcribe/midi also accept `remove_vocals=true`: the
+upload first goes through an opt-in preprocessing step (lead-vocal removal via
+`muscriptor.preprocessing`, using audio-separator) and the model transcribes
+the instrumental stem instead of the original mix. The SSE stream then carries
+`stage` events (preprocessing phases), a terminal `error` event when
+preprocessing fails (transcription never silently falls back to the original
+audio), and — on /transcribe — `stems` download URLs in the final event, served
+by GET /stems/{run_id}/{stem} until the store reaps them.
 """
 
 import asyncio
 import base64
 import dataclasses
+import gc
 import io
 import json
+import logging
 import os
+import shutil
 import tempfile
 import threading
 import time
+import uuid
 import wave
 import zipfile
 from pathlib import Path
@@ -42,7 +55,17 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
+from muscriptor.accelerator import (
+    current_accelerator,
+    is_available as accelerator_available,
+)
 from muscriptor.events import NoteEndEvent, NoteStartEvent, ProgressEvent
+from muscriptor.preprocessing import (
+    AudioPreprocessor,
+    PreprocessError,
+    StemStore,
+    VocalRemovalPreprocessor,
+)
 from muscriptor.soundfonts import SF3_URL
 from muscriptor.tokenizer.mt3 import MT3_FULL_PLUS_GROUP_NAMES
 from muscriptor.transcription_model import TranscriptionModel
@@ -113,13 +136,155 @@ def event_to_dict(ev: NoteStartEvent | NoteEndEvent) -> dict:
     }
 
 
+def _sse(payload: dict) -> str:
+    """One SSE frame: a JSON dict on a single `data:` line."""
+    return f"data: {json.dumps(payload)}\n\n"
+
+
 def create_app(
     model: TranscriptionModel,
     web_dir: str | Path | None = None,
     model_loader: Callable[[str], TranscriptionModel] | None = None,
     model_size: str = "medium",
+    preprocessor_factory: Callable[[], AudioPreprocessor] | None = None,
+    stem_store: StemStore | None = None,
+    idle_unload_s: float | None = None,
 ) -> FastAPI:
     app = FastAPI(title="muscriptor")
+
+    # Optional preprocessing (lead-vocal removal). The factory is only ever
+    # called when a request actually asks for preprocessing, and the default
+    # implementation imports `audio_separator` lazily inside `process()`, so
+    # servers without the dependency keep working as long as the feature
+    # stays off. Tests inject a fake factory here.
+    preprocess = preprocessor_factory or (lambda: VocalRemovalPreprocessor())
+    stems = stem_store or StemStore()
+
+    def _remove_vocals(data: bytes, filename: str | None) -> tuple:
+        """Run vocal removal on an upload, returning (result, run_dir).
+
+        The upload bytes are written unchanged (original file preserved) into
+        a per-run scratch directory that also receives the stems, so the
+        download endpoint can serve them until the StemStore reaps the dir.
+        Raises `PreprocessError` — callers turn that into their error shape
+        (SSE event / HTTPException) and clean up the scratch dir themselves.
+        """
+        run_id = uuid.uuid4().hex
+        # Reap abandoned runs from earlier requests before adding another
+        # scratch dir to the same temp location.
+        stems.sweep_orphans(Path(tempfile.gettempdir()))
+        run_dir = Path(tempfile.gettempdir()) / f"muscriptor-stems-{run_id}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        suffix = Path(filename or "audio.wav").suffix or ".wav"
+        input_path = run_dir / f"input{suffix}"
+        input_path.write_bytes(data)
+        try:
+            device = str(current_accelerator())
+        except RuntimeError:
+            device = "cpu"
+        try:
+            result = preprocess().process(input_path, run_dir, device)
+        except Exception:
+            # No stems were produced — don't leave the scratch dir behind.
+            shutil.rmtree(run_dir, ignore_errors=True)
+            raise
+        return result, run_dir
+
+    def _stems_payload(run_id: str) -> dict:
+        """Download URLs for a run's registered stems."""
+        return {
+            "vocals": f"/stems/{run_id}/vocals",
+            "instrumental": f"/stems/{run_id}/instrumental",
+        }
+
+    # ---- Model unloading (free VRAM while the server sits idle) -----------
+    # The loaded model keeps its weights resident in GPU memory even when
+    # nothing is happening. Dropping the object returns that memory to the
+    # driver (after an allocator flush); because the weights are cached on
+    # disk, the next request just reloads them in a few seconds.
+    # `model_state["model"] is None` + status "unloaded" marks that state.
+    last_model_use = [time.monotonic()]
+
+    def _drop_model() -> None:
+        old = model_state["model"]
+        model_state["model"] = None
+        model_state["status"] = "unloaded"
+        model_state["error"] = None
+        # Dropping the last reference doesn't return cached CUDA blocks to the
+        # driver unless the allocator is told to (same as the model switcher).
+        del old
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001 — cleanup must never raise
+            pass
+
+    def unload_model() -> dict:
+        """Unload the live model, refusing while it's in use."""
+        if model_loader is None:
+            # Without a loader there's no way back: don't strand the server.
+            raise HTTPException(
+                status_code=501,
+                detail="model unloading is not available on this server",
+            )
+        if transcribe_lock.locked():
+            raise HTTPException(
+                status_code=409,
+                detail="a transcription is in progress; try again when it finishes",
+            )
+        if model_state["status"] == "loading":
+            raise HTTPException(
+                status_code=409, detail="a model is already being loaded"
+            )
+        if model_state["model"] is not None:
+            _drop_model()
+        return {"model": model_state["size"], "status": "unloaded"}
+
+    def ensure_model() -> TranscriptionModel:
+        """The live model, reloading it first after an unload.
+
+        Callers hold the transcription lock, so a reload can't race a running
+        transcription. Weights come from the local cache — seconds, no network.
+        """
+        last_model_use[0] = time.monotonic()
+        if model_state["model"] is not None:
+            return model_state["model"]
+        model_state["status"] = "loading"
+        model_state["error"] = None
+        try:
+            model_state["model"] = model_loader(model_state["size"])
+        except Exception as e:  # noqa: BLE001 — surfaced to the client
+            model_state["status"] = "error"
+            model_state["error"] = str(e)
+            raise RuntimeError(f"model reload failed: {e}") from e
+        model_state["status"] = "ready"
+        return model_state["model"]
+
+    if model_loader is not None and idle_unload_s is not None and idle_unload_s > 0:
+
+        def idle_watcher() -> None:
+            while True:
+                time.sleep(min(30.0, idle_unload_s))
+                try:
+                    if (
+                        time.monotonic() - last_model_use[0] >= idle_unload_s
+                        and not transcribe_lock.locked()
+                        and model_state["status"] == "ready"
+                        and model_state["model"] is not None
+                    ):
+                        logger = logging.getLogger("muscriptor.server")
+                        logger.info(
+                            "server idle for %.0fs — unloading the model to free VRAM",
+                            idle_unload_s,
+                        )
+                        _drop_model()
+                except Exception:  # noqa: BLE001 — the watcher must never die
+                    continue
+
+        threading.Thread(target=idle_watcher, daemon=True).start()
 
     # Mutable model holder: POST /model swaps the live model in place. Every
     # endpoint reads the current model through this dict, so a swap is atomic
@@ -237,6 +402,9 @@ def create_app(
         instruments: Annotated[list[str], Form(default_factory=list)],
         # "true" fails loudly on tempo detection errors, "false" doesn't even try
         detect_tempo: Annotated[TempoDetection, Form()] = "best-effort",
+        # Opt-in preprocessing: strip the lead vocal and transcribe the
+        # instrumental stem instead of the original mix.
+        remove_vocals: Annotated[bool, Form()] = False,
         x_client_id: Annotated[str | None, Header()] = None,
     ) -> StreamingResponse:
         data = await file.read()
@@ -278,12 +446,52 @@ def create_app(
         def gen():
             try:
                 events: list[NoteStartEvent | NoteEndEvent] = []
+                # Reload the model first if it was unloaded while idle: the
+                # weights come from the local cache, so this is seconds.
+                try:
+                    model = ensure_model()
+                except RuntimeError as e:
+                    yield _sse({"type": "error", "detail": str(e)})
+                    return
+                # Without preprocessing this stays the exact (wav, sr) decoded
+                # above — the original pipeline, byte for byte. With vocal
+                # removal it is replaced by the decoded instrumental stem, so
+                # both the note decoding and the beat-grid detection below run
+                # on the same audio.
+                transcription_wav = wav
+                run_id: str | None = None
+                stems_payload: dict | None = None
+                if remove_vocals:
+                    # Separation runs inside this generator, under the same
+                    # transcription lock the model uses: the GPU never runs
+                    # separation and transcription at the same time.
+                    yield _sse({"type": "stage", "stage": "prepare"})
+                    try:
+                        result, run_dir_ = _remove_vocals(data, file.filename)
+                    except PreprocessError as e:
+                        yield _sse({"type": "error", "detail": str(e)})
+                        return
+                    yield _sse({"type": "stage", "stage": "instrumental"})
+                    transcription_wav, _ = _read_non_wav_file(
+                        result.audio_for_transcription
+                    )
+                    run_id = run_dir_.name.removeprefix("muscriptor-stems-")
+                    stems.register(
+                        run_id,
+                        run_dir_,
+                        {
+                            **({"vocals": result.vocals_path} if result.vocals_path else {}),
+                            "instrumental": result.instrumental_path,
+                        },
+                    )
+                    stems_payload = _stems_payload(run_id)
+                    yield _sse({"type": "stage", "stage": "transcription"})
                 # batch_size=1 so each chunk's notes stream out as soon as it is
                 # generated, instead of waiting for a whole batch of chunks.
                 # no_eos_is_ok=True so one runaway chunk that never emits EOS only
                 # warns (and keeps its notes) instead of aborting the whole stream.
-                for ev in model_state["model"].transcribe(
-                    (wav, sr),
+                for ev in model.transcribe(
+                    (transcription_wav, sr),
                     instruments=instruments or None,
                     batch_size=1,
                     no_eos_is_ok=True,
@@ -313,9 +521,13 @@ def create_app(
                 # with the bytes base64-encoded.
                 if cancel.is_set():
                     return
+                if remove_vocals:
+                    yield _sse({"type": "stage", "stage": "midi"})
                 # Detect tempo/meter only now: it costs a few seconds of CPU and
                 # nothing before this point needs it, so the notes stream first.
-                grid = model_state["model"].detect_beat_grid_for((wav, sr), detect_tempo)
+                grid = model.detect_beat_grid_for(
+                    (transcription_wav, sr), detect_tempo
+                )
                 # Measure the onset lag up here rather than leaving it to the MIDI
                 # writing, since the UI has to be told the very same number to move
                 # the notes it already drew.
@@ -327,12 +539,12 @@ def create_app(
                             if isinstance(ev, NoteStartEvent)
                         ]
                     )
-                midi_bytes = model_state["model"].events_to_midi_bytes(iter(events), beat_grid=grid)
+                midi_bytes = model.events_to_midi_bytes(iter(events), beat_grid=grid)
                 midi_b64 = base64.b64encode(midi_bytes).decode("ascii")
                 # A second copy with the notes snapped to the beat grid. Useful for
                 # writing sheet music where we want "idealized" timing
                 quantized_midi = (
-                    model_state["model"].events_to_midi_bytes(
+                    model.events_to_midi_bytes(
                         iter(events), beat_grid=grid, quantize=True
                     )
                     if grid is not None and grid.beat_subdivision is not None
@@ -364,6 +576,15 @@ def create_app(
                         else None,
                     }
                 )
+                if remove_vocals:
+                    # Additive keys, sent only on the vocal-removal path so the
+                    # plain pipeline's final event stays byte-identical. The
+                    # UI labels the result "transcribed from instrumental" and
+                    # offers the stems as downloads via these URLs.
+                    payload_dict = json.loads(payload)
+                    payload_dict["stems"] = stems_payload
+                    payload_dict["from_instrumental"] = True
+                    payload = json.dumps(payload_dict)
                 yield f"data: {payload}\n\n"
             finally:
                 release_lock()
@@ -381,6 +602,9 @@ def create_app(
         instruments: Annotated[list[str], Form(default_factory=list)],
         # "true" fails loudly on tempo detection errors, "false" doesn't even try
         detect_tempo: Annotated[TempoDetection, Form()] = "best-effort",
+        # Opt-in preprocessing, same semantics as /transcribe — but this
+        # endpoint returns only the MIDI, so the stems are not kept around.
+        remove_vocals: Annotated[bool, Form()] = False,
         x_client_id: Annotated[str | None, Header()] = None,
     ) -> Response:
         """Transcribe an audio file and return the .mid file directly.
@@ -429,9 +653,25 @@ def create_app(
             x_client_id, cancellable=False
         )
         try:
+            transcription_wav = wav
+            if remove_vocals:
+                # Same mutual exclusion as the model itself (see /transcribe):
+                # separation runs under the lock, so the GPU never does both.
+                try:
+                    result, _run_dir = _remove_vocals(data, file.filename)
+                except PreprocessError as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from e
+                transcription_wav, _ = _read_non_wav_file(
+                    result.audio_for_transcription
+                )
+            # Reload the model first if it was unloaded while idle.
+            try:
+                model = ensure_model()
+            except RuntimeError as e:
+                raise HTTPException(status_code=503, detail=str(e)) from e
             midi_bytes, _ = await asyncio.to_thread(
-                model_state["model"].transcribe_and_postprocess,
-                (wav, sr),
+                model.transcribe_and_postprocess,
+                (transcription_wav, sr),
                 instruments=instruments or None,
                 detect_tempo=detect_tempo,
             )
@@ -546,6 +786,27 @@ def create_app(
             },
         )
 
+    @app.get("/stems/{run_id}/{stem}")
+    async def get_stem(run_id: str, stem: str) -> FileResponse:
+        """Serve a preprocessing stem (vocals/instrumental) for download.
+
+        Stems exist only for runs that used vocal removal, and only until the
+        StemStore reaps their run directory (TTL + cap on stored runs).
+        """
+        path = stems.get(run_id, stem)
+        if path is None or not path.is_file():
+            raise HTTPException(
+                status_code=404,
+                detail="stem not found (expired, or vocal removal was not used)",
+            )
+        return FileResponse(
+            path,
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": f'attachment; filename="{stem}.wav"'
+            },
+        )
+
     @app.get("/model")
     async def get_model() -> dict:
         """Current model size keyword and swap status."""
@@ -570,6 +831,8 @@ def create_app(
                 detail="model switching is not available on this server",
             )
         size = size.strip().lower()
+        if size == "unload":
+            return unload_model()
         if size not in ("small", "medium", "large"):
             raise HTTPException(
                 status_code=400,
@@ -595,16 +858,17 @@ def create_app(
                 model_state["size"] = size
                 model_state["status"] = "ready"
                 model_state["error"] = None
+                # A fresh load counts as "use": the idle unloader must not
+                # drop the model right after it was asked for.
+                last_model_use[0] = time.monotonic()
                 # Free the old model's GPU memory promptly: dropping the last
                 # reference doesn't return the cached CUDA blocks to the driver
                 # unless the allocator is told to.
                 del old
+                gc.collect()
                 try:
-                    import gc
-
                     import torch
 
-                    gc.collect()
                     torch.cuda.empty_cache()
                 except Exception:
                     pass

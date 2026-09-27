@@ -53,6 +53,9 @@ export function WelcomeScreen(props: {
   onUseExample: () => Promise<void>;
   condSelected: Set<string>;
   onCondChange: (next: Set<string>) => void;
+  /** Opt-in lead-vocal removal before transcription. */
+  removeVocals: boolean;
+  onRemoveVocalsChange: (next: boolean) => void;
   onTranscribe: () => void;
   /** Where the submitted upload stands; drives the CTA's label + disabled state
    *  (the screen stays put until the server accepts it). */
@@ -71,6 +74,8 @@ export function WelcomeScreen(props: {
     onUseExample,
     condSelected,
     onCondChange,
+    removeVocals,
+    onRemoveVocalsChange,
     onTranscribe,
     submitState,
     onCancelSubmit,
@@ -201,6 +206,24 @@ export function WelcomeScreen(props: {
       {error?.kind !== "server" && selectedFile !== null && (
         <>
           <ConditioningPanel selected={condSelected} onChange={onCondChange} />
+          <section className="card px-4 py-3.5">
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 shrink-0 accent-accent"
+                checked={removeVocals}
+                disabled={submitting}
+                onChange={(e) => onRemoveVocalsChange(e.target.checked)}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-sm font-medium text-content">
+                  {t("rv_title")}
+                </span>
+                <span className="text-xs text-muted">{t("rv_hint")}</span>
+                <span className="text-xs text-faint">{t("rv_caveat")}</span>
+              </span>
+            </label>
+          </section>
           <div className="flex items-center justify-end gap-5">
             {submitting && (
               <Button

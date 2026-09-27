@@ -37,6 +37,31 @@ export const EN: Dict = {
   cond_placeholder: "Add an instrument…",
   cond_remove: "Remove {name}",
 
+  // Vocal removal (opt-in preprocessing)
+  rv_title: "Remove lead vocals before transcription",
+  rv_hint: "May improve instrument and tablature transcription.",
+  rv_caveat: "On some tracks, separation may alter instrument timbre.",
+
+  // Preprocessing stages (shown while transcribing with vocal removal on)
+  stage_prepare: "Preparing audio…",
+  stage_vocal_removal: "Removing lead vocals…",
+  stage_instrumental: "Preparing instrumental…",
+  stage_transcription: "Transcribing instrumental…",
+  stage_midi: "Creating MIDI…",
+
+  // Result / stem downloads
+  result_from_instrumental:
+    "Transcribed from the instrumental (lead vocals removed).",
+  download_stem_vocals: "Vocals (WAV)",
+  download_stem_instrumental: "Instrumental (WAV)",
+  alert_stem_failed: "Couldn't download the stem: {message}",
+
+  // Preview source (after a vocal-removal run)
+  source_title: "What the preview plays",
+  source_original: "Original",
+  source_instrumental: "Instrumental",
+  source_vocals: "Vocals",
+
   // Controls bar
   play: "Play",
   pause: "Pause",
@@ -54,6 +79,12 @@ export const EN: Dict = {
   model_loading: "loading…",
   model_error: "load failed",
   model_retry: "retry",
+  model_unload: "unload",
+  model_unload_title:
+    "Free GPU memory (the model reloads from cache on the next request)",
+  model_unloaded: "unloaded",
+  model_load: "load",
+  model_load_title: "Load the model back into GPU memory",
   instruments_given_hint:
     "The instruments you specified. Greyed-out ones weren't detected in the audio.",
   more_instruments: "More instruments",

@@ -34,6 +34,32 @@ export const RU: Dict = {
   cond_placeholder: "Добавьте инструмент…",
   cond_remove: "Убрать {name}",
 
+  // Vocal removal (opt-in preprocessing)
+  rv_title: "Удалить ведущий вокал перед транскрипцией",
+  rv_hint: "Может улучшить распознавание инструментов и табулатур.",
+  rv_caveat:
+    "На отдельных композициях обработка может изменить тембр инструментов.",
+
+  // Preprocessing stages (shown while transcribing with vocal removal on)
+  stage_prepare: "Подготовка аудио…",
+  stage_vocal_removal: "Удаление ведущего вокала…",
+  stage_instrumental: "Подготовка инструментала…",
+  stage_transcription: "Транскрипция инструментала…",
+  stage_midi: "Создание MIDI…",
+
+  // Result / stem downloads
+  result_from_instrumental:
+    "Транскрипция выполнена по инструменталу (ведущий вокал удалён).",
+  download_stem_vocals: "Вокал (WAV)",
+  download_stem_instrumental: "Инструментал (WAV)",
+  alert_stem_failed: "Не удалось скачать стем: {message}",
+
+  // Preview source (after a vocal-removal run)
+  source_title: "Что слышно в предпросмотре",
+  source_original: "Оригинал",
+  source_instrumental: "Инструментал",
+  source_vocals: "Вокал",
+
   // Controls bar
   play: "Играть",
   pause: "Пауза",
@@ -51,6 +77,12 @@ export const RU: Dict = {
   model_loading: "загружается…",
   model_error: "ошибка загрузки",
   model_retry: "повторить",
+  model_unload: "выгрузить",
+  model_unload_title:
+    "Освободить видеопамять (модель перезагрузится из кэша по первому запросу)",
+  model_unloaded: "выгружена",
+  model_load: "загрузить",
+  model_load_title: "Загрузить модель обратно в видеопамять",
   instruments_given_hint:
     "Указанные вами инструменты. Серые — не обнаружены в записи.",
   more_instruments: "Другие инструменты",

@@ -115,6 +115,22 @@ if not errorlevel 1 (
     echo       Скачайте https://github.com/FluidSynth/fluidsynth/releases
     echo       ^(asset "fluidsynth-...-win10-x64-cpp11.zip"^) и распакуйте в tools\fluidsynth\
 )
+where ffmpeg >nul 2>nul
+if not errorlevel 1 (
+    echo   [ok] ffmpeg найден  (удаление ведущего вокала будет работать)
+) else (
+    echo   [!] ffmpeg не найден — не будет удаления ведущего вокала.
+    echo       Пробую установить через winget...
+    winget install --id=Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements
+    where ffmpeg >nul 2>nul
+    if not errorlevel 1 (
+        echo   [ok] ffmpeg установлен. Если он не находится — откройте новую консоль.
+    ) else (
+        echo   [X] Не удалось установить ffmpeg автоматически.
+        echo       Установите его сами: winget install Gyan.FFmpeg
+        echo       ^(или https://www.gyan.dev/ffmpeg/builds/^) и запустите install.bat снова.
+    )
+)
 
 echo.
 echo  ══════════════════════════════════════════════════

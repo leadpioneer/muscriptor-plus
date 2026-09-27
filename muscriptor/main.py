@@ -9,7 +9,9 @@ from typing import Annotated, Literal
 
 import typer
 
+from muscriptor.accelerator import current_accelerator
 from muscriptor.events import NoteEndEvent, NoteStartEvent, ProgressEvent
+from muscriptor.preprocessing import PreprocessError
 from muscriptor.tokenizer.mt3 import (
     MT3_FULL_PLUS_GROUP_NAMES,
     resolve_instrument_names,
@@ -74,6 +76,29 @@ def _event_to_dict(ev: NoteStartEvent | NoteEndEvent) -> dict:
         "end_time": ev.end_time,
         "start_event_index": ev.start_event_index,
     }
+
+
+def _remove_vocals_cli(audio_file: Path) -> Path:
+    """Strip the lead vocal, keeping both stems next to the input file.
+
+    Returns the instrumental stem — the file the transcription should run on.
+    Separation errors carry user-facing messages already, so they are printed
+    as-is by the caller.
+    """
+    from muscriptor.preprocessing import VocalRemovalPreprocessor
+
+    try:
+        device = str(current_accelerator())
+    except RuntimeError:
+        device = "cpu"
+    stems_dir = audio_file.parent / f"{audio_file.stem}_stems"
+    typer.echo("Removing lead vocals…", err=True)
+    result = VocalRemovalPreprocessor().process(audio_file, stems_dir, device)
+    typer.echo(
+        f"Stems saved to {stems_dir} — transcribing the instrumental.",
+        err=True,
+    )
+    return result.audio_for_transcription
 
 
 @app.command()
@@ -226,6 +251,19 @@ def transcribe(
             ),
         ),
     ] = None,
+    remove_vocals: Annotated[
+        bool,
+        typer.Option(
+            "--remove-vocals",
+            help=(
+                "Strip the lead vocal (audio-separator, Mel-Band-RoFormer) and "
+                "transcribe the instrumental instead — often improves "
+                "instrument and tablature accuracy on vocal tracks. Both stems "
+                "are saved to <audio>_stems/ next to the input file. Requires "
+                "ffmpeg on PATH."
+            ),
+        ),
+    ] = False,
     # typer can't take the bool | Literal["best-effort"] union the API uses, so
     # the CLI spells all three states as strings and converts below.
     detect_tempo: Annotated[
@@ -300,19 +338,29 @@ def transcribe(
 
     _device = None if device == "auto" else device
 
+    # Vocal removal runs before the model loads: it fails fast and cheap, and
+    # its output decides which audio gets transcribed.
+    transcription_audio = audio_file
+    if remove_vocals:
+        try:
+            transcription_audio = _remove_vocals_cli(audio_file)
+        except PreprocessError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+
     # All chatty progress/timing info goes to stderr — stdout is reserved for
     # the actual output when `-o -` is used.
     typer.echo("Loading model…", err=True)
     model = _load_model(model_path, _device, dtype)
 
-    typer.echo(f"Transcribing {audio_file} …", err=True)
+    typer.echo(f"Transcribing {transcription_audio} …", err=True)
 
     if auralize is not None and format != OutputFormat.midi:
         typer.echo("Error: --auralize requires --format midi", err=True)
         raise typer.Exit(1)
 
     kwargs = dict(
-        audio=audio_file,
+        audio=transcription_audio,
         use_sampling=sampling,
         temperature=temperature,
         cfg_coef=cfg_coef,
@@ -432,6 +480,18 @@ def serve(
             ),
         ),
     ] = None,
+    idle_unload: Annotated[
+        int,
+        typer.Option(
+            "--idle-unload",
+            help=(
+                "Unload the model from GPU memory after this many idle minutes "
+                "(the next request reloads it from the local cache in seconds). "
+                "Frees VRAM for other applications while the server sits unused. "
+                "0 disables unloading. Only with a size-keyword --model."
+            ),
+        ),
+    ] = 5,
 ):
     """Run the HTTP transcription server (POST /transcribe → SSE event stream)."""
     import logging
@@ -464,6 +524,7 @@ def serve(
         # GET /model reports the truth for size keywords and local paths alike;
         # swapping to a published size works from either starting point.
         model_size=model_path if model_path else "medium",
+        idle_unload_s=float(idle_unload * 60) if idle_unload > 0 else None,
     )
     uvicorn.run(fastapi_app, host=host, port=port)
 

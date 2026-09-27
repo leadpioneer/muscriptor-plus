@@ -37,6 +37,9 @@ export function OutputBar(props: {
   result: TranscriptionResult | null;
   /** Source audio, re-uploaded to /auralize alongside the MIDI for the mix. */
   currentFile: File | null;
+  /** Localized label of the current preprocessing stage, or null when the
+   *  plain pipeline is running (it sends no stage events). */
+  stageLabel: string | null;
   onTranscribeAnother: () => void;
 }) {
   const {
@@ -45,6 +48,7 @@ export function OutputBar(props: {
     progressLabelRef,
     result,
     currentFile,
+    stageLabel,
     onTranscribeAnother,
   } = props;
   const { t } = useI18n();
@@ -176,13 +180,52 @@ export function OutputBar(props: {
     }
   }
 
+  // Fetches one of the separation stems the server kept for this run (only
+  // available when the transcription ran with lead-vocal removal).
+  async function downloadStem(kind: "vocals" | "instrumental") {
+    if (result === null || result.stems === null) return;
+    const url = kind === "vocals" ? result.stems.vocals : result.stems.instrumental;
+    if (url === null) return;
+    track("download", { format: `stem_${kind}` });
+    setBusy(t("generating"));
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(await errorDetail(resp));
+      const blob = await resp.blob();
+      const url2 = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url2;
+      a.download = `${stem()}_${kind}.wav`;
+      a.click();
+      URL.revokeObjectURL(url2);
+    } catch (e) {
+      track("download_error", {
+        format: `stem_${kind}`,
+        message: (e as Error).message,
+      });
+      alert(t("alert_stem_failed", { message: (e as Error).message }));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const menuItem =
     "block w-full rounded-none text-left text-[13px] font-normal text-content hover:bg-[#20212b]";
 
   return (
     <div className="col-span-full flex flex-wrap items-center gap-3 rounded-card border border-line bg-surface px-3.5 py-3">
+      {result?.fromInstrumental && (
+        <span className="text-xs text-muted" title={t("result_from_instrumental")}>
+          {t("result_from_instrumental")}
+        </span>
+      )}
       {transcribing && (
         <div className="flex min-w-48 flex-1 items-center gap-3">
+          {stageLabel !== null && (
+            <span className="whitespace-nowrap text-xs text-muted">
+              {stageLabel}
+            </span>
+          )}
           <div className="h-1 flex-1 overflow-hidden rounded-full bg-bg">
             <div
               ref={progressFillRef}
@@ -282,6 +325,34 @@ export function OutputBar(props: {
               >
                 {t("download_sheets")}
               </Button>
+              {result?.stems?.vocals && (
+                <Button
+                  kind="ghost"
+                  pad="px-3 py-2"
+                  role="menuitem"
+                  className={menuItem}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    downloadStem("vocals");
+                  }}
+                >
+                  {t("download_stem_vocals")}
+                </Button>
+              )}
+              {result?.stems?.instrumental && (
+                <Button
+                  kind="ghost"
+                  pad="px-3 py-2"
+                  role="menuitem"
+                  className={menuItem}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    downloadStem("instrumental");
+                  }}
+                >
+                  {t("download_stem_instrumental")}
+                </Button>
+              )}
             </div>
           )}
         </div>

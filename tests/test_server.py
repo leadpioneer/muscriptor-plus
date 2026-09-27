@@ -648,3 +648,70 @@ def test_sheets_engraves_concurrently(monkeypatch):
     gate.set()
     a.join(timeout=10)
     assert out["first"] == 200
+
+
+def _make_loader(events):
+    """A fake model_loader for POST /model: counts calls, returns fresh mocks."""
+    calls: list[str] = []
+
+    def loader(size: str):
+        calls.append(size)
+        return make_model(events=events)
+
+    return loader, calls
+
+
+def test_model_unload_and_reload(tmp_path):
+    """POST /model size=unload drops the model; the next transcription
+    transparently reloads it through the loader (from the local cache)."""
+    s0 = NoteStartEvent(pitch=60, start_time=0.0, index=0, instrument="piano")
+    events = [s0, NoteEndEvent(end_time=0.5, start_event=s0)]
+    loader, calls = _make_loader(events)
+    client = TestClient(create_app(make_model(), model_loader=loader))
+
+    resp = client.post("/model", data={"size": "unload"})
+    assert resp.status_code == 200
+    assert resp.json() == {"model": "medium", "status": "unloaded"}
+    assert client.get("/model").json()["status"] == "unloaded"
+
+    # The next transcription reloads the model instead of failing.
+    resp = client.post(
+        "/transcribe",
+        files={"file": ("silent.wav", _wav_bytes(tmp_path), "audio/wav")},
+    )
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    assert parsed[-1]["type"] == "transcription_complete"
+    assert client.get("/model").json()["status"] == "ready"
+    assert calls == ["medium"]
+
+
+def test_model_unload_returns_501_without_a_loader():
+    """A server started from a local weights file can't reload — refuse to
+    unload rather than strand it without a model."""
+    client = TestClient(create_app(make_model(), model_loader=None))
+    resp = client.post("/model", data={"size": "unload"})
+    assert resp.status_code == 501
+
+
+def test_model_idle_unload_frees_vram_after_the_timeout(tmp_path):
+    """With idle_unload_s set, the watcher drops the model once the server
+    has been idle past the deadline; the next request reloads it."""
+    s0 = NoteStartEvent(pitch=60, start_time=0.0, index=0, instrument="piano")
+    events = [s0, NoteEndEvent(end_time=0.5, start_event=s0)]
+    loader, _ = _make_loader(events)
+    client = TestClient(
+        create_app(make_model(), model_loader=loader, idle_unload_s=0.05)
+    )
+    # Freshly created — inside the idle window.
+    assert client.get("/model").json()["status"] == "ready"
+    time.sleep(0.4)
+    assert client.get("/model").json()["status"] == "unloaded"
+    # And a transcription still works (transparent reload).
+    resp = client.post(
+        "/transcribe",
+        files={"file": ("silent.wav", _wav_bytes(tmp_path), "audio/wav")},
+    )
+    assert _parse_sse(resp.text)[-1]["type"] == "transcription_complete"
+    assert client.get("/model").json()["status"] == "ready"
+

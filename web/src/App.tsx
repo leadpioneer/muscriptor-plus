@@ -32,6 +32,9 @@ import { ProgressEstimator, formatClock } from "./progress";
 
 type Screen = "welcome" | "transcribe";
 
+/** What the preview's "Original" bus plays: the uploaded mix or a stem. */
+export type PreviewSource = "original" | "instrumental" | "vocals";
+
 /**
  * What has happened to the upload since "Transcribe" was clicked. The welcome
  * screen stays put until the server accepts the request, so a server that is
@@ -45,6 +48,16 @@ export type SubmitState =
   | { phase: "idle" }
   | { phase: "submitting" }
   | { phase: "busy"; retryAt: number; attempt: number };
+
+/** Preprocessing stages the server may announce on the SSE stream, each with a
+ *  `stage_<name>` i18n key. Unknown stage ids are ignored rather than shown. */
+const STAGES = new Set([
+  "prepare",
+  "vocal_removal",
+  "instrumental",
+  "transcription",
+  "midi",
+]);
 
 // The song is Headache by Lost Deposit. ig: @lostdeposit
 const EXAMPLE = {
@@ -92,6 +105,22 @@ export function App() {
   const [stereo, setStereo] = useState(false);
   const [userScrolled, setUserScrolled] = useState(false);
   const [condSelected, setCondSelected] = useState<Set<string>>(() => new Set());
+  // Opt-in lead-vocal removal, chosen on the welcome screen. Mirrored into a
+  // ref so `transcribe` reads it at submit time without re-subscribing.
+  const [removeVocals, setRemoveVocals] = useState(false);
+  const removeVocalsRef = useRef(removeVocals);
+  removeVocalsRef.current = removeVocals;
+  // Current preprocessing stage (e.g. "vocal_removal"), from the SSE stream.
+  // null when the plain pipeline is running (it sends no stage events).
+  const [stage, setStage] = useState<string | null>(null);
+  // What the preview's "Original" bus plays: the uploaded mix, or one of the
+  // separation stems. Only switchable after a vocal-removal run.
+  const [previewSource, setPreviewSource] = useState<PreviewSource>("original");
+  // Fetched stem blobs, cached for instant re-switching (stems expire on the
+  // server after a while, so keep our own copy).
+  const stemBlobsRef = useRef<
+    Partial<Record<"instrumental" | "vocals", Blob>>
+  >({});
   // True while a file is being dragged over the window. On the welcome screen
   // this swaps the panel's prompt in place instead of showing the overlay.
   const [dragging, setDragging] = useState(false);
@@ -109,6 +138,7 @@ export function App() {
     audio,
     rollRef,
     getConditioning: () => Array.from(condRef.current),
+    getRemoveVocals: () => removeVocalsRef.current,
     progress,
     // A failed transcription bounces back to the welcome screen with a message.
     onError: (message) => {
@@ -124,6 +154,7 @@ export function App() {
     // Refused (503) — stay on the welcome screen and count down to the retry.
     onBusy: ({ attempt, retryInMs }) =>
       setSubmit({ phase: "busy", retryAt: Date.now() + retryInMs, attempt }),
+    onStage: (s) => setStage(s),
     setAppState,
     setInstruments,
     setResult,
@@ -135,17 +166,61 @@ export function App() {
   // button reports progress — including waiting out a busy server. Called from
   // a button click, so the AudioContext unlock inside `transcribe` still
   // happens under a user gesture.
+  // Point the preview's WAV bus at `kind`, fetching/decoding as needed. Returns
+  // false when the source isn't available (e.g. the stem expired server-side);
+  // the previously loaded audio keeps playing then.
+  async function applyPreviewSource(kind: PreviewSource): Promise<boolean> {
+    if (kind === "original") {
+      if (currentFile === null) return false;
+      return audio.loadWavBlob(currentFile);
+    }
+    let blob: Blob | undefined = stemBlobsRef.current[kind];
+    if (blob === undefined && result?.stems) {
+      const url = result.stems[kind];
+      if (url == null) return false;
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) return false;
+        blob = await resp.blob();
+        stemBlobsRef.current[kind] = blob;
+      } catch {
+        return false;
+      }
+    }
+    if (blob === undefined) return false;
+    return audio.loadWavBlob(blob);
+  }
+
+  function changePreviewSource(kind: PreviewSource) {
+    setPreviewSource(kind);
+    applyPreviewSource(kind);
+  }
+
+  // After a vocal-removal run, listen to the instrumental by default: that is
+  // what the transcription was made from, so what you hear matches the notes.
+  useEffect(() => {
+    if (result?.fromInstrumental && result.stems) {
+      stemBlobsRef.current = {};
+      setPreviewSource("instrumental");
+      applyPreviewSource("instrumental");
+    }
+    // Deliberately only on a new result: the stems are fetched once per run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
+
   function startTranscription() {
     if (selectedFile === null || submit.phase !== "idle") return;
     track("transcription_start", {
       instruments: Array.from(condSelected).sort().join(",") || "(none)",
       instrument_count: condSelected.size,
+      remove_vocals: removeVocalsRef.current,
       is_example: selectedFile.name === EXAMPLE.filename,
       file_type: (selectedFile.name.match(/\.([^./]+)$/)?.[1] ?? "unknown").toLowerCase(),
       file_size_mb: Math.round(selectedFile.size / 1e5) / 10,
     });
-    // Drop any leftover file error from a previous failed attempt.
+    // Drop any leftover file error and stage label from a previous attempt.
     setError(null);
+    setStage(null);
     setSubmit({ phase: "submitting" });
     transcribe(selectedFile);
   }
@@ -179,6 +254,9 @@ export function App() {
     setInstruments([]);
     setResult(null);
     setUserScrolled(false);
+    setStage(null);
+    setPreviewSource("original");
+    stemBlobsRef.current = {};
     setAppState("idle");
     setSubmit({ phase: "idle" });
     setScreen("welcome");
@@ -403,6 +481,8 @@ export function App() {
             onUseExample={useExample}
             condSelected={condSelected}
             onCondChange={setCondSelected}
+            removeVocals={removeVocals}
+            onRemoveVocalsChange={setRemoveVocals}
             onTranscribe={startTranscription}
             submitState={submit}
             onCancelSubmit={cancelSubmit}
@@ -438,6 +518,9 @@ export function App() {
               setStereo(v);
               audio.setStereo(v);
             }}
+            previewSource={previewSource}
+            onPreviewSourceChange={changePreviewSource}
+            showPreviewSource={result?.fromInstrumental === true && result.stems != null}
             following={!userScrolled}
             onToggleFollow={() => {
               if (userScrolled) {
@@ -468,6 +551,9 @@ export function App() {
             progressLabelRef={progressLabelRef}
             result={result}
             currentFile={currentFile}
+            stageLabel={
+              stage !== null && STAGES.has(stage) ? t(`stage_${stage}`) : null
+            }
             onTranscribeAnother={transcribeAnother}
           />
         </main>

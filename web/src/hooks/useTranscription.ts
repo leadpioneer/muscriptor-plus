@@ -29,16 +29,32 @@ type TranscriptionCompleteEvent = {
   // no grid to snap them to.
   quantized_midi: string | null;
   beat_grid: BeatGrid | null; // null when no constant tempo was detected
+  // Download URLs for the separation stems; present only when the upload was
+  // transcribed with lead-vocal removal.
+  stems?: { vocals: string | null; instrumental: string | null } | null;
+  from_instrumental?: boolean;
 };
 type ProgressMsg = {
   type: "progress";
   completed: number; // chunks transcribed so far
   total: number; // total chunks
 };
+type StageEvent = { type: "stage"; stage: string };
+// Terminal failure of an opt-in preprocessing step (e.g. vocal removal). The
+// transcription never ran, so there is nothing to fall back to.
+type ServerErrorEvent = { type: "error"; detail: string };
 type StreamedEvent =
-  StartEvent | EndEvent | TranscriptionCompleteEvent | ProgressMsg;
+  | StartEvent
+  | EndEvent
+  | TranscriptionCompleteEvent
+  | ProgressMsg
+  | StageEvent
+  | ServerErrorEvent;
 
 export type AppState = "idle" | "transcribing" | "done" | "error";
+
+/** Download URLs for the separation stems of a vocal-removal run. */
+export type StemUrls = { vocals: string | null; instrumental: string | null };
 
 /** Everything a finished transcription hands the UI to export. */
 export type TranscriptionResult = {
@@ -50,6 +66,10 @@ export type TranscriptionResult = {
   quantizedMidi: Blob | null;
   /** What to call `midi` when it is saved: the uploaded file's name, as .mid. */
   filename: string;
+  /** Stem download URLs, when the upload was preprocessed with vocal removal. */
+  stems: StemUrls | null;
+  /** True when the MIDI was transcribed from the instrumental, not the mix. */
+  fromInstrumental: boolean;
 };
 
 /** Stable id for this browser tab, sent as `X-Client-Id` on every transcribe
@@ -74,6 +94,8 @@ export interface TranscriptionDeps {
   rollRef: RefObject<PianoRoll | null>;
   /** Conditioning instruments selected in the UI, read at submit time. */
   getConditioning: () => string[];
+  /** Whether the user asked for lead-vocal removal, read at submit time. */
+  getRemoveVocals: () => boolean;
   /** Smooths chunk-completion anchors into a live progress fraction + ETA. */
   progress: ProgressEstimator;
   /** Called when a (non-superseded) transcription fails, so the UI can recover.
@@ -85,6 +107,9 @@ export interface TranscriptionDeps {
   /** Called each time the server refuses with 503 because it is busy with
    *  another transcription, with the wait until the automatic retry. */
   onBusy: (info: { attempt: number; retryInMs: number }) => void;
+  /** Announces a preprocessing stage (e.g. "vocal_removal") so the UI can say
+   *  what the server is doing before the transcription chunks start flowing. */
+  onStage: (stage: string) => void;
   setAppState: (s: AppState) => void;
   /** Detected-instrument names, in first-seen order. */
   setInstruments: Dispatch<SetStateAction<string[]>>;
@@ -106,10 +131,12 @@ export function useTranscription(deps: TranscriptionDeps) {
     audio,
     rollRef,
     getConditioning,
+    getRemoveVocals,
     progress,
     onError,
     onAccepted,
     onBusy,
+    onStage,
     setAppState,
     setInstruments,
     setResult,
@@ -159,6 +186,8 @@ export function useTranscription(deps: TranscriptionDeps) {
     base64: string,
     quantizedBase64: string | null,
     filename: string,
+    stems: StemUrls | null,
+    fromInstrumental: boolean,
   ) {
     const midi = midiBlobOf(base64);
     if (midiUrlRef.current !== null) URL.revokeObjectURL(midiUrlRef.current);
@@ -169,6 +198,8 @@ export function useTranscription(deps: TranscriptionDeps) {
       midi,
       quantizedMidi: quantizedBase64 ? midiBlobOf(quantizedBase64) : null,
       filename,
+      stems,
+      fromInstrumental,
     });
   }
 
@@ -236,7 +267,10 @@ export function useTranscription(deps: TranscriptionDeps) {
     let beatGrid: BeatGrid | null = null;
     try {
       const cond = getConditioning();
-      const extra = cond.length > 0 ? { instruments: cond } : undefined;
+      const removeVocals = getRemoveVocals();
+      const extra: Record<string, string | string[]> = {};
+      if (cond.length > 0) extra.instruments = cond;
+      if (removeVocals) extra.remove_vocals = "true";
       for await (const raw of streamTranscribeWithRetry("/transcribe", file, {
         extra,
         signal: controller.signal,
@@ -263,7 +297,13 @@ export function useTranscription(deps: TranscriptionDeps) {
         const ev = raw as StreamedEvent;
         if (ev.type === "transcription_complete") {
           // Final event: the assembled MIDI file. Enables the download button.
-          setMidi(ev.data, ev.quantized_midi, midiFilename);
+          setMidi(
+            ev.data,
+            ev.quantized_midi,
+            midiFilename,
+            ev.stems ?? null,
+            ev.from_instrumental === true,
+          );
           // Tempo came with it — redraw the time grid as bars instead of seconds,
           // and move the notes onto the beats (the MIDI above already has them
           // there), in the roll and in the scheduled playback alike.
@@ -276,6 +316,18 @@ export function useTranscription(deps: TranscriptionDeps) {
           // Coarse chunk anchor — the estimator smooths it into the live bar.
           progress.onAnchor(ev.completed, ev.total, performance.now());
           continue;
+        }
+        if (ev.type === "stage") {
+          // Preprocessing phase announcement (only sent with vocal removal).
+          if (!isStale()) onStage(ev.stage);
+          continue;
+        }
+        if (ev.type === "error") {
+          // Opt-in preprocessing failed: a terminal, user-facing explanation.
+          throw new TranscribeError(ev.detail || "transcription failed", {
+            userMessage: ev.detail || undefined,
+            status: 500,
+          });
         }
         onEvent(ev);
         if (ev.type === "start") noteCount++;
