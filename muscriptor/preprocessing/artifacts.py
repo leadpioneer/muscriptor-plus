@@ -53,7 +53,9 @@ class StemStore:
         now = self._time_fn()
         expired = [
             run_id
-            for run_id, (_, directory, created) in self._entries.items()
+            # Entries are (directory, {stem: path}, creation time); only the
+            # creation time decides expiry here.
+            for run_id, (_, _, created) in self._entries.items()
             if now - created > self._ttl_s
         ]
         for run_id in expired:

@@ -467,6 +467,11 @@ def create_app(
                     # separation and transcription at the same time.
                     yield _sse({"type": "stage", "stage": "prepare"})
                     try:
+                        # The longest, most important preprocessing phase:
+                        # loading the separation weights + the separation
+                        # itself. Announced up front so the UI can show it
+                        # while the (blocking) preprocessor call runs.
+                        yield _sse({"type": "stage", "stage": "vocal_removal"})
                         result, run_dir_ = _remove_vocals(data, file.filename)
                     except PreprocessError as e:
                         yield _sse({"type": "error", "detail": str(e)})
@@ -652,13 +657,18 @@ def create_app(
         _cancel, release_lock = await acquire_transcribe_lock(
             x_client_id, cancellable=False
         )
+        # The /transcribe/midi response carries only the MIDI bytes — the
+        # stems are never downloadable through this endpoint, so the run
+        # directory is removed as soon as the request is over (see the
+        # finally below) instead of waiting for the orphan sweep.
+        run_dir: Path | None = None
         try:
             transcription_wav = wav
             if remove_vocals:
                 # Same mutual exclusion as the model itself (see /transcribe):
                 # separation runs under the lock, so the GPU never does both.
                 try:
-                    result, _run_dir = _remove_vocals(data, file.filename)
+                    result, run_dir = _remove_vocals(data, file.filename)
                 except PreprocessError as e:
                     raise HTTPException(status_code=422, detail=str(e)) from e
                 transcription_wav, _ = _read_non_wav_file(
@@ -680,6 +690,8 @@ def create_app(
             # if tempo detection fails.
             raise HTTPException(status_code=422, detail=str(e)) from e
         finally:
+            if run_dir is not None:
+                shutil.rmtree(run_dir, ignore_errors=True)
             release_lock()
 
         return Response(

@@ -387,13 +387,15 @@ def test_with_remove_vocals_the_model_transcribes_the_instrumental(tmp_path):
         "stage",
         "stage",
         "stage",
+        "stage",
         "start",
         "end",
         "stage",  # midi
         "transcription_complete",
     ]
-    assert [ev["stage"] for ev in parsed[:3]] == [
+    assert [ev["stage"] for ev in parsed[:4]] == [
         "prepare",
+        "vocal_removal",
         "instrumental",
         "transcription",
     ]
@@ -438,6 +440,7 @@ def test_preprocessing_failure_stops_before_transcription(tmp_path):
     parsed = _parse_sse(resp.text)
     assert parsed == [
         {"type": "stage", "stage": "prepare"},
+        {"type": "stage", "stage": "vocal_removal"},
         {"type": "error", "detail": "separation exploded"},
     ]
     model.transcribe.assert_not_called()
@@ -458,3 +461,23 @@ def test_midi_endpoint_transcribes_the_instrumental(tmp_path):
     assert resp.content == FAKE_MIDI
     wav_arg, _ = model.transcribe_and_postprocess.call_args[0][0]
     assert torch.allclose(wav_arg, torch.full_like(wav_arg, 100.0 / 32768.0))
+
+
+def test_midi_endpoint_removes_the_run_dir_when_done(tmp_path):
+    # The MIDI response carries no downloadable stems, so the scratch
+    # directory must not outlive the request (no orphan-sweep wait).
+    import tempfile
+
+    pre = FakePreprocessor()
+    model = make_model()
+    client = _app_with_preprocessor(pre, model=model)
+    tempdir = Path(tempfile.gettempdir())
+    before = set(tempdir.glob("muscriptor-stems-*"))
+    resp = client.post(
+        "/transcribe/midi",
+        files={"file": ("silent.wav", _wav_bytes(tmp_path), "audio/wav")},
+        data={"remove_vocals": "true"},
+    )
+    assert resp.status_code == 200
+    assert len(pre.calls) == 1  # preprocessing actually ran
+    assert set(tempdir.glob("muscriptor-stems-*")) - before == set()
