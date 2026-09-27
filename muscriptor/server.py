@@ -760,6 +760,51 @@ def create_app(
 
         return Response(content=wav_bytes, media_type="audio/wav")
 
+    @app.post("/arrange/guitar")
+    async def arrange_guitar(
+        file: Annotated[UploadFile, File()],
+        track: Annotated[int | None, Form()] = None,
+        channel: Annotated[int | None, Form()] = None,
+        tuning: Annotated[str, Form()] = "standard",
+        max_fret: Annotated[int, Form()] = 24,
+        phrase_gap_beats: Annotated[float, Form()] = 1.0,
+        overrides: Annotated[str | None, Form()] = None,
+    ) -> dict:
+        """Arrange one monophonic MIDI track for guitar (string/fret per note).
+
+        A thin wrapper around the pure `muscriptor.guitar_arrangement`
+        pipeline: no transcription model, no MuseScore, no audio. Returns the
+        versioned arrangement JSON. Structured errors use
+        `{"code", "message", "details"}`: 400 for an unreadable MIDI file or
+        malformed/contradictory overrides, 422 for an ambiguous track choice,
+        polyphonic input or an unplayable note.
+        """
+        from muscriptor.guitar_arrangement import (
+            GuitarArrangementError,
+            MidiParseError,
+            InvalidOverridesError,
+            arrange,
+        )
+
+        midi_bytes = await file.read()
+        try:
+            return arrange(
+                midi_bytes,
+                filename=file.filename or "input.mid",
+                track=track,
+                channel=channel,
+                tuning_name=tuning,
+                max_fret=max_fret,
+                phrase_gap_beats=phrase_gap_beats,
+                overrides_text=overrides,
+            )
+        except GuitarArrangementError as e:
+            status = 400 if isinstance(e, (MidiParseError, InvalidOverridesError)) else 422
+            raise HTTPException(
+                status_code=status,
+                detail={"code": e.code, "message": str(e), "details": e.details},
+            ) from e
+
     @app.post("/sheets")
     async def sheets(
         midi: Annotated[UploadFile, File()],

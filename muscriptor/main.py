@@ -536,6 +536,133 @@ def list_instruments():
         typer.echo(name)
 
 
+@app.command("arrange-guitar")
+def arrange_guitar(
+    midi_file: Annotated[
+        Path, typer.Argument(help="Input MIDI file (.mid / .midi)")
+    ],
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output JSON path. Default: <midi_file>.arrangement.json",
+        ),
+    ] = None,
+    list_tracks: Annotated[
+        bool,
+        typer.Option(
+            "--list-tracks",
+            help="List the file's note-bearing tracks and exit (no solving).",
+        ),
+    ] = False,
+    track: Annotated[
+        int | None,
+        typer.Option(
+            "--track",
+            help="Track index to arrange. Required when several tracks have notes.",
+        ),
+    ] = None,
+    channel: Annotated[
+        int | None,
+        typer.Option(
+            "--channel",
+            help="MIDI channel within the track (0-15; 9 is drums).",
+        ),
+    ] = None,
+    tuning: Annotated[
+        str, typer.Option("--tuning", help="Instrument preset (currently: standard).")
+    ] = "standard",
+    max_fret: Annotated[
+        int, typer.Option("--max-fret", help="Highest fret considered playable.")
+    ] = 24,
+    phrase_gap_beats: Annotated[
+        float,
+        typer.Option(
+            "--phrase-gap-beats",
+            help="A silence of this many beats starts a new, independently "
+            "optimized phrase.",
+        ),
+    ] = 1.0,
+    overrides: Annotated[
+        Path | None,
+        typer.Option(
+            "--overrides",
+            help="JSON file pinning specific notes to string/fret positions "
+            '({"version": 1, "locks": [{"note_id": …, "string": …, "fret": …}]}).',
+        ),
+    ] = None,
+):
+    """Arrange one monophonic MIDI track for guitar (string/fret per note).
+
+    Works purely on the MIDI file: pitches, onsets and durations are never
+    changed, no audio model is loaded and nothing but this CPU-only solver
+    runs. The result is a versioned JSON document, not yet tablature/PDF.
+    """
+    from muscriptor.guitar_arrangement import GuitarArrangementError, arrange, parse_midi
+
+    try:
+        midi_data = midi_file.read_bytes()
+        parsed = parse_midi(midi_data)
+    except OSError as e:
+        typer.echo(f"Error: cannot read {midi_file}: {e}", err=True)
+        raise typer.Exit(1)
+    except GuitarArrangementError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    if list_tracks:
+        summaries = parsed.summaries()
+        if not summaries:
+            typer.echo("No note-bearing tracks.", err=True)
+            raise typer.Exit(1)
+        typer.echo(
+            f"{'track':>5}  {'channel':>7}  {'notes':>5}  {'program':>7}  name"
+        )
+        for s in summaries:
+            typer.echo(
+                f"{s['track_index']:>5}  {s['channel']:>7}  {s['note_count']:>5}"
+                f"  {str(s['program']) if s['program'] is not None else '-':>7}"
+                f"  {s['track_name'] or ''}{'  (drum channel)' if s['drum'] else ''}"
+            )
+        return
+
+    overrides_text = None
+    if overrides is not None:
+        try:
+            overrides_text = overrides.read_text(encoding="utf-8")
+        except OSError as e:
+            typer.echo(f"Error: cannot read {overrides}: {e}", err=True)
+            raise typer.Exit(1)
+
+    try:
+        arrangement = arrange(
+            midi_data,
+            filename=midi_file.name,
+            track=track,
+            channel=channel,
+            tuning_name=tuning,
+            max_fret=max_fret,
+            phrase_gap_beats=phrase_gap_beats,
+            overrides_text=overrides_text,
+        )
+    except GuitarArrangementError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    destination = output or midi_file.with_suffix(".arrangement.json")
+    destination.write_text(
+        json.dumps(arrangement, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    metrics = arrangement["metrics"]
+    typer.echo(
+        f"Arranged {metrics['note_count']} notes in {metrics['phrase_count']} "
+        f"phrase(s); saved to {destination}",
+        err=True,
+    )
+
+
 def main():
     app()
 

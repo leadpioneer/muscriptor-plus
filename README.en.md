@@ -126,6 +126,53 @@ uv run muscriptor serve --model large            # web UI
 uv run muscriptor serve --idle-unload 10         # unload the model after 10 min idle
 ```
 
+## Guitar fingering arranger (MIDI → strings/frets)
+
+A separate symbolic module for guitar parts: it takes a **MIDI file (not
+audio)** and, for a single monophonic track, picks a string and a fret for
+every note. Pitches, onsets and durations are **never changed** — no octave
+shifts, no transposition, and no "suspicious" notes are dropped. The
+optimization is global: phrases (separated by a silence of ≥ 1 beat) are
+solved as a whole with dynamic programming, so early notes may be moved up
+the neck to avoid a big jump at the end of a phrase. The result is an optimum
+with respect to the current cost function (fret/string movement, a penalty
+for large position changes, a weak high-fret penalty) — not "perfect
+fingering".
+
+String numbering: **1 is the highest** (standard tuning: E4, B3, G3, D3, A2,
+E2). Version 1 handles monophony only: simultaneous note onsets fail with a
+readable error — extract a melodic track first. The track is picked
+automatically when there is exactly one non-drum note-bearing track;
+otherwise the module lists the candidates.
+
+```bash
+uv run muscriptor arrange-guitar song.mid --list-tracks   # what's inside
+uv run muscriptor arrange-guitar song.mid --track 2 --output arrangement.json
+uv run muscriptor arrange-guitar song.mid --track 2 \
+    --tuning standard --max-fret 24 --phrase-gap-beats 1.0
+```
+
+Manual pins for a future editor (`--overrides overrides.json`):
+
+```json
+{
+  "version": 1,
+  "locks": [
+    {"note_id": "track:2/channel:0/note:17", "string": 2, "fret": 5}
+  ]
+}
+```
+
+A lock must sound exactly the note's original pitch (the module never
+transposes); it leaves that note a single candidate and re-solves the whole
+phrase. Every note in `arrangement.json` carries `string`, `fret`, `locked`
+and the full `legal_positions` list — enough to draw an interactive fretboard
+as the next step. The JSON is an intermediate format: **not tablature or PDF
+yet**; polyphonic arrangement, ASCII tab and notation export are separate
+future stages. The API exposes a mirror endpoint `POST /arrange/guitar`
+(MIDI upload + the same parameters, structured
+`{"code", "message", "details"}` errors).
+
 Sheet music (`--format sheets`) requires **[MuseScore 4+](https://musescore.org/en/download)**
 installed (detected automatically on Windows; set `MUSCRIPTOR_MUSESCORE` for
 non-standard locations). Works best on music with a steady tempo.
