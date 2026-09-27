@@ -18,11 +18,24 @@ from .errors import (
     TrackNotFoundError,
     UnplayableNoteError,
 )
-from .fretboard import STANDARD_TUNING, possible_positions, resolve_tuning
-from .midi_input import DRUM_CHANNEL, ParsedMidi, TrackInfo, parse_midi, select_notes
+from .fretboard import (
+    STANDARD_TUNING,
+    possible_fingerings,
+    possible_positions,
+    resolve_tuning,
+)
+from .midi_input import (
+    DRUM_CHANNEL,
+    ParsedMidi,
+    TrackInfo,
+    check_monophonic,
+    parse_midi,
+    select_notes,
+)
 from .models import (
     ArrangementSolution,
     AssignedNote,
+    FingeringState,
     FretPosition,
     GuitarTuning,
     MidiNote,
@@ -32,10 +45,9 @@ from .models import (
     SourceInfo,
 )
 from .phrases import split_phrases
-from .midi_input import check_monophonic
-from .pipeline import arrange
+from .pipeline import arrange, arrange_solution
 from .serialization import OVERRIDES_VERSION, SCHEMA_VERSION, parse_overrides, to_json
-from .solver import solve_phrase, solve_phrases
+from .solver import explain_lines, solve_phrase, solve_phrases
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -45,6 +57,7 @@ __all__ = [
     "AmbiguousTrackError",
     "ArrangementSolution",
     "AssignedNote",
+    "FingeringState",
     "FretPosition",
     "GuitarArrangementError",
     "GuitarTuning",
@@ -61,9 +74,12 @@ __all__ = [
     "TrackNotFoundError",
     "UnplayableNoteError",
     "arrange",
+    "arrange_solution",
     "check_monophonic",
+    "explain_lines",
     "parse_midi",
     "parse_overrides",
+    "possible_fingerings",
     "possible_positions",
     "resolve_tuning",
     "select_notes",

@@ -42,7 +42,7 @@ def test_successful_arrangement_writes_the_json(tmp_path):
     )
     assert result.exit_code == 0
     document = json.loads(output.read_text(encoding="utf-8"))
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["source"]["filename"] == "song.mid"
     assert document["metrics"]["note_count"] == 2
     for note in document["notes"]:

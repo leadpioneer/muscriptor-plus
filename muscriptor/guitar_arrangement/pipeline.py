@@ -28,11 +28,40 @@ def arrange(
     overrides_text: str | None = None,
     config: SolverConfig | None = None,
 ) -> dict:
-    """Parse, select, phrase, lock, solve and serialize.
+    """Arrange and serialize in one call (the HTTP endpoint's entry point)."""
+    return solution_to_dict(
+        arrange_solution(
+            midi_data,
+            filename=filename,
+            track=track,
+            channel=channel,
+            tuning_name=tuning_name,
+            max_fret=max_fret,
+            phrase_gap_beats=phrase_gap_beats,
+            overrides_text=overrides_text,
+            config=config,
+        )
+    )
 
-    Returns the JSON-ready arrangement dict. Raises a `GuitarArrangementError`
-    subclass for every unsupported or contradictory input — nothing is ever
-    handled by a silent fallback.
+
+def arrange_solution(
+    midi_data: bytes,
+    *,
+    filename: str,
+    track: int | None = None,
+    channel: int | None = None,
+    tuning_name: str = "standard",
+    max_fret: int = 24,
+    phrase_gap_beats: float = 1.0,
+    overrides_text: str | None = None,
+    config: SolverConfig | None = None,
+) -> ArrangementSolution:
+    """Parse, select, phrase, lock and solve.
+
+    Returns the full solution object (the CLI needs phrase internals for
+    `--explain`); serialization happens on top. Raises a
+    `GuitarArrangementError` subclass for every unsupported or contradictory
+    input — nothing is ever handled by a silent fallback.
     """
     if config is None:
         config = SolverConfig(
@@ -50,7 +79,7 @@ def arrange(
         if overrides_text
         else {}
     )
-    solution = ArrangementSolution(
+    return ArrangementSolution(
         source=SourceInfo(
             filename=filename,
             ticks_per_beat=parsed.ticks_per_beat,
@@ -61,9 +90,10 @@ def arrange(
         ),
         tuning=tuning,
         config=config,
-        phrases=solve_phrases(phrases, tuning, config, locked),
+        phrases=solve_phrases(
+            phrases, tuning, config, parsed.ticks_per_beat, locked
+        ),
     )
-    return solution_to_dict(solution)
 
 
 def _validate_locks(

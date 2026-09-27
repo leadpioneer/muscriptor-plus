@@ -592,6 +592,14 @@ def arrange_guitar(
             '({"version": 1, "locks": [{"note_id": …, "string": …, "fret": …}]}).',
         ),
     ] = None,
+    explain: Annotated[
+        bool,
+        typer.Option(
+            "--explain",
+            help="Print a per-phrase ergonomic summary (hand positions, "
+            "position changes, cost) to stderr.",
+        ),
+    ] = False,
 ):
     """Arrange one monophonic MIDI track for guitar (string/fret per note).
 
@@ -599,7 +607,12 @@ def arrange_guitar(
     changed, no audio model is loaded and nothing but this CPU-only solver
     runs. The result is a versioned JSON document, not yet tablature/PDF.
     """
-    from muscriptor.guitar_arrangement import GuitarArrangementError, arrange, parse_midi
+    from muscriptor.guitar_arrangement import (
+        GuitarArrangementError,
+        arrange_solution,
+        parse_midi,
+        to_json,
+    )
 
     try:
         midi_data = midi_file.read_bytes()
@@ -636,7 +649,7 @@ def arrange_guitar(
             raise typer.Exit(1)
 
     try:
-        arrangement = arrange(
+        solution = arrange_solution(
             midi_data,
             filename=midi_file.name,
             track=track,
@@ -650,17 +663,25 @@ def arrange_guitar(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
+    if explain:
+        _explain_phrases(solution)
+
     destination = output or midi_file.with_suffix(".arrangement.json")
-    destination.write_text(
-        json.dumps(arrangement, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-    metrics = arrangement["metrics"]
+    destination.write_text(to_json(solution) + "\n", encoding="utf-8")
+    notes = [a for p in solution.phrases for a in p.assigned]
     typer.echo(
-        f"Arranged {metrics['note_count']} notes in {metrics['phrase_count']} "
+        f"Arranged {len(notes)} notes in {len(solution.phrases)} "
         f"phrase(s); saved to {destination}",
         err=True,
     )
+
+
+def _explain_phrases(solution) -> None:
+    """--explain: per-phrase ergonomic summary on stderr."""
+    from muscriptor.guitar_arrangement import explain_lines
+
+    for line in explain_lines(solution):
+        typer.echo(line, err=True)
 
 
 def main():

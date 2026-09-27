@@ -67,3 +67,54 @@ def test_generator_supports_any_number_of_strings():
         FretPosition(string=6, fret=0),
         FretPosition(string=7, fret=5),
     )
+
+
+# --- Ergonomic fingerings (v2) ----------------------------------------------
+
+from muscriptor.guitar_arrangement import (  # noqa: E402
+    FingeringState,
+    SolverConfig,
+    possible_fingerings,
+)
+
+
+def test_closed_note_gets_four_finger_states():
+    from muscriptor.guitar_arrangement import FretPosition as FP
+
+    config = SolverConfig()
+    states = possible_fingerings(FP(string=1, fret=7), config)
+    # Finger 1 in position 7, finger 2 in position 6, … finger 4 in position 4.
+    assert [(s.hand_position, s.finger) for s in states] == [
+        (7, 1),
+        (6, 2),
+        (5, 3),
+        (4, 4),
+    ]
+    for state in states:
+        assert state.position.fret == state.hand_position + state.finger - 1
+
+
+def test_low_fret_constrains_the_fingers():
+    config = SolverConfig()
+    # Fret 1: only finger 1 (hand position 1) keeps hand_position >= 1.
+    states = possible_fingerings(FretPosition(string=1, fret=1), config)
+    assert [(s.hand_position, s.finger) for s in states] == [(1, 1)]
+
+
+def test_open_string_states_cover_hand_positions():
+    config = SolverConfig()
+    states = possible_fingerings(FretPosition(string=1, fret=0), config)
+    # finger 0 everywhere, one state per valid hand position (24-3 = 21).
+    assert len(states) == config.hand_position_limit
+    assert all(s.finger == 0 for s in states)
+    assert [s.hand_position for s in states] == list(
+        range(1, config.hand_position_limit + 1)
+    )
+
+
+def test_hand_position_limit_is_bounded_and_overridable():
+    assert SolverConfig(max_fret=24).hand_position_limit == 21
+    assert SolverConfig(max_fret=12).hand_position_limit == 9
+    config = SolverConfig(max_fret=24, max_hand_position=7)
+    assert config.hand_position_limit == 7
+    assert len(possible_fingerings(FretPosition(string=1, fret=0), config)) == 7

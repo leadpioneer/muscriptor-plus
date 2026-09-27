@@ -32,7 +32,7 @@ def test_upload_returns_the_arrangement_document():
     resp = _post(_client())
     assert resp.status_code == 200
     document = resp.json()
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["source"]["filename"] == "song.mid"
     assert document["source"]["ticks_per_beat"] == 480
     assert document["instrument"]["name"] == "standard_guitar"

@@ -165,12 +165,18 @@ Manual pins for a future editor (`--overrides overrides.json`):
 
 A lock must sound exactly the note's original pitch (the module never
 transposes); it leaves that note a single candidate and re-solves the whole
-phrase. Every note in `arrangement.json` carries `string`, `fret`, `locked`
-and the full `legal_positions` list — enough to draw an interactive fretboard
-as the next step. The JSON is an intermediate format: **not tablature or PDF
-yet**; polyphonic arrangement, ASCII tab and notation export are separate
-future stages. The API exposes a mirror endpoint `POST /arrange/guitar`
-(MIDI upload + the same parameters, structured
+phrase. Since **schema v2** the solver's state is a full fingering: every
+note carries `string`, `fret`, **`hand_position`** (the fret the index finger
+sits at), **`finger`** (0 = open string, 1–4 = fingers), `locked` and both
+`legal_positions` (string/fret) and `legal_fingerings` (full states). The
+cost models the hand, not the notes' frets: moving between frets within one
+hand position is free, a hand shift is visible in the
+`position_change_count` / `total_hand_position_travel` metrics, and an open
+string or a rest inside the phrase makes a shift cheaper. `--explain`
+prints a per-phrase summary to stderr. The JSON is an intermediate format:
+**not tablature or PDF yet**; polyphonic arrangement, ASCII tab and notation
+export are separate future stages. The API exposes a mirror endpoint
+`POST /arrange/guitar` (MIDI upload + the same parameters, structured
 `{"code", "message", "details"}` errors).
 
 Sheet music (`--format sheets`) requires **[MuseScore 4+](https://musescore.org/en/download)**

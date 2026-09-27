@@ -1,7 +1,7 @@
-"""Fretboard geometry: which string/fret spots can sound a given pitch."""
+"""Fretboard geometry: positions and ergonomic fingerings for a pitch."""
 
 from .errors import InvalidOverridesError, UnplayableNoteError
-from .models import FretPosition, GuitarTuning
+from .models import FingeringState, FretPosition, GuitarTuning, SolverConfig
 
 STANDARD_TUNING = GuitarTuning(
     name="standard",
@@ -50,3 +50,36 @@ def possible_positions(
             high_pitch=high,
         )
     return tuple(sorted(positions, key=lambda p: (p.fret, p.string)))
+
+
+def possible_fingerings(
+    position: FretPosition, config: SolverConfig
+) -> tuple[FingeringState, ...]:
+    """Every ergonomic `FingeringState` that sounds `position`, deterministically
+    ordered (ascending finger for closed notes; ascending hand position for
+    open ones).
+
+    Closed note: `hand_position = fret - finger + 1` for fingers 1–4, clamped
+    to `1 <= hand_position <= hand_position_limit` — a note on the 7th fret is
+    reachable by finger 1 in position 7, finger 2 in position 6, and so on.
+    Open string: `finger = 0` and the hand may sit anywhere in range, so the
+    states cover every valid `hand_position` — the DP can keep the current
+    hand position or move it while the open string rings. The state count
+    stays bounded by `hand_position_limit` (≤ max_fret − 3 by default).
+    """
+    limit = config.hand_position_limit
+    if position.fret == 0:
+        return tuple(
+            FingeringState(position=position, hand_position=hp, finger=0)
+            for hp in range(1, limit + 1)
+        )
+    states = []
+    for finger in (1, 2, 3, 4):
+        hand_position = position.fret - finger + 1
+        if 1 <= hand_position <= limit:
+            states.append(
+                FingeringState(
+                    position=position, hand_position=hand_position, finger=finger
+                )
+            )
+    return tuple(states)
