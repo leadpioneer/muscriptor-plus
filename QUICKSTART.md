@@ -42,7 +42,7 @@ uv run muscriptor serve --model large   # сразу большая модель
 uv run muscriptor transcribe song.mp3   # из командной строки
 ```
 
-Модель переключается и прямо из веб-интерфейса (выпадающий список в шапке); веса скачиваются при первом выборе и кешируются.
+Модель переключается и прямо из веб-интерфейса (выпадающий список в шапке); веса скачиваются при первом выборе и кешируются. Через 5 минут простоя модель автоматически выгружается из видеопамяти (`--idle-unload <минуты>` у `serve`, `0` — выключить) и перезагружается по первому запросу.
 
 ### 5. Windows: известные нюансы
 
@@ -50,6 +50,7 @@ uv run muscriptor transcribe song.mp3   # из командной строки
 - **Кодировка консоли**: запуская через `Start-Process` с перенаправлением вывода, задайте `$env:PYTHONUTF8 = '1'` — иначе отладочный вывод модели падает на не-ASCII символах.
 - **MuseScore (ноты в PDF)**: [MuseScore 4+](https://musescore.org/en/download) ставится отдельно; стандартные пути установки (`C:\Program Files\MuseScore 4\bin\…`) находятся автоматически, для нестандартного пути задайте `MUSCRIPTOR_MUSESCORE`.
 - **FluidSynth (скачивание WAV)**: нужен бинарник `fluidsynth` в PATH; удобный способ — официальный [Windows-билд](https://github.com/FluidSynth/fluidsynth/releases), распакованный в `tools/fluidsynth` и добавленный в PATH процесса.
+- **ffmpeg (удаление ведущего вокала)**: нужен в PATH; `install.bat` предложит установить через winget (`Gyan.FFmpeg`). Опция включается галочкой на экране загрузки или флагом `--remove-vocals` в CLI; веса модели разделения скачиваются при первом запуске и кешируются.
 
 ---
 
@@ -95,7 +96,7 @@ uv run muscriptor serve --model large   # start with the large model
 uv run muscriptor transcribe song.mp3   # command-line transcription
 ```
 
-The model can also be switched from the web UI (dropdown in the header); weights are downloaded on first use and cached.
+The model can also be switched from the web UI (dropdown in the header); weights are downloaded on first use and cached. After 5 minutes of idle time the model is automatically unloaded from VRAM (`--idle-unload <minutes>` on `serve`, `0` disables) and reloaded on the next request.
 
 ### 5. Windows notes
 
@@ -103,3 +104,4 @@ The model can also be switched from the web UI (dropdown in the header); weights
 - **Console encoding**: when launching with redirected output (`Start-Process`), set `$env:PYTHONUTF8 = '1'` — otherwise the model's debug output can crash on non-ASCII characters.
 - **MuseScore (PDF sheet music)**: install [MuseScore 4+](https://musescore.org/en/download) separately; standard install locations (`C:\Program Files\MuseScore 4\bin\…`) are detected automatically, otherwise set `MUSCRIPTOR_MUSESCORE`.
 - **FluidSynth (WAV downloads)**: a `fluidsynth` binary must be on PATH; the easiest way is the official [Windows build](https://github.com/FluidSynth/fluidsynth/releases) unpacked into `tools/fluidsynth` and added to the process PATH.
+- **ffmpeg (lead-vocal removal)**: must be on PATH; `install.bat` offers to install it via winget (`Gyan.FFmpeg`). Enable the option with the checkbox on the upload screen or the `--remove-vocals` CLI flag; separation weights download on first use and are cached.
