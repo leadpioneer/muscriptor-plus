@@ -129,21 +129,18 @@ uv run muscriptor serve --idle-unload 10         # unload the model after 10 min
 ## Guitar fingering arranger (MIDI → strings/frets)
 
 A separate symbolic module for guitar parts: it takes a **MIDI file (not
-audio)** and, for a single monophonic track, picks a string and a fret for
-every note. Pitches, onsets and durations are **never changed** — no octave
-shifts, no transposition, and no "suspicious" notes are dropped. The
-optimization is global: phrases (separated by a silence of ≥ 1 beat) are
-solved as a whole with dynamic programming, so early notes may be moved up
-the neck to avoid a big jump at the end of a phrase. The result is an optimum
-with respect to the current cost function (fret/string movement, a penalty
-for large position changes, a weak high-fret penalty) — not "perfect
-fingering".
+audio)** and, for one track, picks a string and a fret for every note.
+Pitches, onsets and durations are **never changed** — no octave shifts, no
+transposition, and no "suspicious" notes are dropped. The optimization is
+global: phrases (separated by full silence of ≥ 1 beat) are solved as a whole
+with dynamic programming, so early notes may be moved up the neck to avoid a
+big jump at the end of a phrase. The result is an optimum with respect to the
+current cost function (fret/string movement, a penalty for large position
+changes, a weak high-fret penalty) — not "perfect fingering".
 
 String numbering: **1 is the highest** (standard tuning: E4, B3, G3, D3, A2,
-E2). Version 1 handles monophony only: simultaneous note onsets fail with a
-readable error — extract a melodic track first. The track is picked
-automatically when there is exactly one non-drum note-bearing track;
-otherwise the module lists the candidates.
+E2). The track is picked automatically when there is exactly one non-drum
+note-bearing track; otherwise the module lists the candidates.
 
 ```bash
 uv run muscriptor arrange-guitar song.mid --list-tracks   # what's inside
@@ -152,7 +149,7 @@ uv run muscriptor arrange-guitar song.mid --track 2 \
     --tuning standard --max-fret 24 --phrase-gap-beats 1.0
 ```
 
-Manual pins for a future editor (`--overrides overrides.json`):
+Manual pins for the web-UI editor (`--overrides overrides.json`):
 
 ```json
 {
@@ -165,7 +162,8 @@ Manual pins for a future editor (`--overrides overrides.json`):
 
 A lock must sound exactly the note's original pitch (the module never
 transposes); it leaves that note a single candidate and re-solves the whole
-phrase. Since **schema v2** the solver's state is a full fingering: every
+phrase — including the chord the note sounds in. Since **schema v3** the
+solver's state is a full fingering: every
 note carries `string`, `fret`, **`hand_position`** (the fret the index finger
 sits at), **`finger`** (0 = open string, 1–4 = fingers), `locked` and both
 `legal_positions` (string/fret) and `legal_fingerings` (full states). The
@@ -175,30 +173,49 @@ hand position is free, a hand shift is visible in the
 string or a rest inside the phrase makes a shift cheaper. `--explain`
 prints a per-phrase summary to stderr.
 
-A polyphonic track (chords, double stops) fails by default. `--melody top` /
-`--melody bottom` opts into a deterministic monophonic reduction: in every
-simultaneous-onset group the highest (or lowest) note is kept, and everything
-dropped is listed in the document's `melody_reduction` block. Overlaps with
-distinct onsets (bass lines, legato) are kept as-is.
+One to six simultaneous onsets are normal input: the chord solver keeps
+**every** note (one per string, no transposition, no trimmed durations, no
+arpeggiation). The optimization is global over the whole phrase — the solver
+may pre-position an early chord high to serve the next one. Events of seven
+or more notes raise a structured error instead of dropping notes. Asynchronous
+overlaps (a ringing bass note) are not silence: they are kept as-is and
+reported in the document's `polyphony_analysis`; strict voice separation is a
+future stage.
+
+Explicit single-line extraction (`--melody top` / `--melody bottom`) remains
+an opt-in mode: the highest/lowest note is picked only among notes sharing
+the same onset — it is not melody/bass voice separation.
 
 From the resulting JSON:
 - `uv run muscriptor guitar-tab arrangement.json --midi song.mid` writes an
   ASCII tab and the reverse MIDI (pitches, timings and velocities verbatim;
-  the document carries no tempo map);
-- `POST /arrange/guitar/midi` and `POST /arrange/guitar/tab` are the same
-  converters over the API;
-- feed that MIDI to the existing `/sheets` pipeline to get score + tab PDFs
-  (requires MuseScore, see below).
+  MIDI never stores the chosen string/fret);
+- `uv run muscriptor guitar-musicxml arrangement.json` writes **fingering-
+  preserving MusicXML**: every note carries `<technical><string>/<fret>`,
+  overlapping durations are laid out across voices, durations are never
+  shortened (for unquantized input the engraved shape is the nearest dyadic
+  `<type>` while `<duration>` stays verbatim, and short measures are padded
+  with rests);
+- feed arrangement.json to `POST /arrange/guitar/pdf` to get a score+tab PDF
+  engraved by MuseScore with exactly the chosen string/fret — user locks
+  included. Plain MIDI cannot do this: MuseScore's auto-tab would invent its
+  own positions.
 
 The web UI bundles all of this in the Guitar Arranger Lab (the
 "Edit fingering" button — on the welcome screen and after a transcription):
-an SVG fretboard with legal positions and locks, phrase/note navigation,
-audition playback (nominal 120 BPM), downloads for arrangement.json /
-arrangement.mid / the tab, and score+tab PDFs via MuseScore.
+an SVG fretboard with legal positions and locks (the whole chord on screen,
+the selected note highlighted, barres), arrow-key navigation across onset
+events and chord notes, audition playback (nominal 120 BPM), downloads for
+arrangement.json / arrangement.mid / the ASCII tab / MusicXML, and a PDF
+that keeps the chosen fingering.
 
 The API exposes a mirror endpoint
 `POST /arrange/guitar` (MIDI upload + the same parameters, structured
-`{"code", "message", "details"}` errors).
+`{"code", "message", "details"}` errors), plus `POST /arrange/guitar/midi`,
+`/tab`, `/musicxml` and `/pdf` — all of them take a confirmed
+arrangement.json (schema v3; the converters also accept legacy v2 documents).
+
+Frontend tests need Node 22.19+ (pinned in `web/package.json` and `.nvmrc`).
 
 Sheet music (`--format sheets`) requires **[MuseScore 4+](https://musescore.org/en/download)**
 installed (detected automatically on Windows; set `MUSCRIPTOR_MUSESCORE` for
