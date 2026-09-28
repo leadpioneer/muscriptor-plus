@@ -176,7 +176,13 @@ sits at), **`finger`** (0 = open string, 1–4 = fingers), `locked` and both
 cost models the hand, not the notes' frets: moving between frets within one
 hand position is free, a hand shift is visible in the
 `position_change_count` / `total_hand_position_travel` metrics, and an open
-string or a rest inside the phrase makes a shift cheaper. `--explain`
+string or a rest inside the phrase makes a shift cheaper. An open string is
+free while the hand sits near the nut (position ≤ 3) or whenever the note
+sounds together with others — chords, async overlaps and locked notes are
+always exempt. A completely solo open string high up the neck reads as a
+register mistake: the solver prefers the fretted in-position note (the
+penalty is smaller than a down-and-back hand trip, so notes playable only
+open — e.g. low E — never drag the hand around). `--explain`
 prints a per-phrase summary to stderr.
 
 One to six simultaneous onsets are normal input: the chord solver keeps
