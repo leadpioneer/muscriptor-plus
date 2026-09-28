@@ -27,10 +27,19 @@ const PAD_BOTTOM = 34;
 export function GuitarFretboard(props: {
   arrangement: GuitarArrangement;
   note: ArrangedNote;
+  /** The whole onset event: every chord note stays visible on the neck. */
+  chordNotes?: ArrangedNote[];
+  /** Barre annotations of the current event (drawn as a bracket line). */
+  barres?: {
+    finger: number;
+    fret: number;
+    from_string: number;
+    to_string: number;
+  }[];
   disabled: boolean;
   onSelect: (noteId: string, string: number, fret: number) => void;
 }) {
-  const { arrangement, note, disabled, onSelect } = props;
+  const { arrangement, note, chordNotes = [], barres = [], disabled, onSelect } = props;
   const { t } = useI18n();
   const { max_fret, open_pitches } = arrangement.instrument;
   const stringCount = open_pitches.length;
@@ -197,6 +206,78 @@ export function GuitarFretboard(props: {
             </text>
           </g>
         )}
+
+        {/* Barre brackets of the current event. */}
+        {barres.map((barre) => {
+          const top = stringY(Math.min(barre.from_string, barre.to_string));
+          const bottom = stringY(Math.max(barre.from_string, barre.to_string));
+          return (
+            <rect
+              key={`barre-${barre.finger}-${barre.fret}`}
+              x={fretCenter(barre.fret) - 6}
+              y={top - 4}
+              width={12}
+              height={bottom - top + 8}
+              rx={5}
+              className="fill-accent/25 stroke-accent/60 pointer-events-none"
+              aria-hidden
+            />
+          );
+        })}
+
+        {/* The other notes of the current chord: filled but quiet markers,
+            so the whole shape stays readable while only the selected note
+            shows its alternatives. Open strings sit in front of the nut. */}
+        {chordNotes
+          .filter((n) => n.id !== note.id)
+          .map((chordNote) => (
+            <g
+              key={chordNote.id}
+              data-chord-note={chordNote.id}
+              aria-label={t("guitar_note_aria", {
+                note: pitchName(chordNote.pitch),
+                s: chordNote.string,
+                f: chordNote.fret,
+              })}
+            >
+              <circle
+                cx={
+                  chordNote.fret === 0
+                    ? OPEN_WIDTH / 2
+                    : fretCenter(chordNote.fret)
+                }
+                cy={stringY(chordNote.string)}
+                r={9}
+                className="fill-accent/45"
+              />
+              <text
+                x={
+                  chordNote.fret === 0
+                    ? OPEN_WIDTH / 2
+                    : fretCenter(chordNote.fret)
+                }
+                y={stringY(chordNote.string) + 3.5}
+                textAnchor="middle"
+                className="pointer-events-none fill-white font-mono text-[10px] font-semibold"
+              >
+                {chordNote.finger ?? "?"}
+              </text>
+              {chordNote.locked && (
+                <circle
+                  cx={
+                    chordNote.fret === 0
+                      ? OPEN_WIDTH / 2
+                      : fretCenter(chordNote.fret)
+                  }
+                  cy={stringY(chordNote.string)}
+                  r={13}
+                  fill="none"
+                  strokeDasharray="3 2"
+                  className="stroke-[#e0b25a] stroke-[1.5px]"
+                />
+              )}
+            </g>
+          ))}
 
         {/* Alternative legal positions — focusable lock targets */}
         {alternatives.map((p) => (

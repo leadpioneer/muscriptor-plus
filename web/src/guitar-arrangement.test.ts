@@ -10,16 +10,32 @@ import {
 import { ARRANGEMENT } from "./test/fixtures";
 
 describe("parseArrangement", () => {
-  it("accepts schema v2", () => {
+  it("accepts schema v3 and keeps the event structure", () => {
     const parsed = parseArrangement(JSON.parse(JSON.stringify(ARRANGEMENT)));
-    expect(parsed.schema_version).toBe(2);
+    expect(parsed.schema_version).toBe(3);
     expect(parsed.notes[0].legal_positions).toHaveLength(3);
+    expect(parsed.polyphony_analysis?.strictly_monophonic).toBe(true);
+  });
+
+  it("accepts legacy schema v2 documents (documented policy)", () => {
+    const legacy = {
+      ...JSON.parse(JSON.stringify(ARRANGEMENT)),
+      schema_version: 2,
+      polyphony_analysis: undefined,
+      events: undefined,
+    };
+    const parsed = parseArrangement(legacy);
+    expect(parsed.schema_version).toBe(2); // passed through; v2 renders fine
+    expect(parsed.notes[0].finger).toBe(1);
   });
 
   it("rejects other schema versions with a readable error", () => {
-    expect(() => parseArrangement({ schema_version: 3 })).toThrow(GuitarSchemaError);
-    expect(() => parseArrangement({ schema_version: 3 })).toThrow(/schema_version 3/);
-    expect(() => parseArrangement({ schema_version: 1 })).toThrow(/schema_version 1/);
+    expect(() => parseArrangement({ schema_version: 4 })).toThrow(
+      GuitarSchemaError,
+    );
+    expect(() => parseArrangement({ schema_version: 1 })).toThrow(
+      /schema_version 1/,
+    );
   });
 
   it("rejects non-object payloads and missing sections", () => {

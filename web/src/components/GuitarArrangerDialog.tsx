@@ -24,6 +24,8 @@ import { track } from "../analytics";
 import {
   arrangeGuitar,
   buildOverrides,
+  eventOf,
+  groupPhraseEvents,
   parseTrackCandidates,
   phraseHandMetrics,
   pitchName,
@@ -305,12 +307,33 @@ export function GuitarArrangerDialog(props: {
     setNoteId(id);
   }
 
-  function moveNote(delta: -1 | 1) {
+  function moveEvent(delta: -1 | 1) {
     if (applied === null) return;
     const notes = applied.arrangement.notes.filter((n) => n.phrase === phrase);
-    const index = notes.findIndex((n) => n.id === noteIdRef.current);
-    if (index === -1) return;
-    const next = notes[Math.min(notes.length - 1, Math.max(0, index + delta))];
+    const events = groupPhraseEvents(notes);
+    if (events.length === 0) return;
+    const currentIndex = events.findIndex((group) =>
+      group.some((n) => n.id === noteIdRef.current),
+    );
+    const nextIndex = Math.min(
+      events.length - 1,
+      Math.max(0, (currentIndex === -1 ? 0 : currentIndex) + delta),
+    );
+    const group = events[nextIndex];
+    if (group && group[0]) setNoteId(group[0].id);
+  }
+
+  function moveNoteInEvent(delta: -1 | 1) {
+    if (applied === null) return;
+    const notes = applied.arrangement.notes.filter((n) => n.phrase === phrase);
+    const events = groupPhraseEvents(notes);
+    const group =
+      events.find((candidates) =>
+        candidates.some((n) => n.id === noteIdRef.current),
+      ) ?? null;
+    if (group === null || group.length < 2) return;
+    const index = group.findIndex((n) => n.id === noteIdRef.current);
+    const next = group[Math.min(group.length - 1, Math.max(0, index + delta))];
     if (next) setNoteId(next.id);
   }
 
@@ -402,6 +425,27 @@ export function GuitarArrangerDialog(props: {
     saveBlob(await resp.blob(), stem() + ".mid");
   }
 
+  /** Fingering-preserving MusicXML download (same pipeline as the PDF). */
+  async function downloadMusicxml() {
+    if (applied === null) return;
+    track("guitar_arranger", { action: "download_musicxml" });
+    const form = new FormData();
+    form.append(
+      "document",
+      new Blob([applied.text], { type: "application/json" }),
+      "arrangement.json",
+    );
+    const resp = await fetch("/arrange/guitar/musicxml", {
+      method: "POST",
+      body: form,
+    });
+    if (!resp.ok) {
+      setError({ code: null, message: await resp.text(), details: null });
+      return;
+    }
+    saveBlob(await resp.blob(), stem() + ".musicxml");
+  }
+
   async function toggleTab() {
     if (tabText !== null) {
       setTabOpen(false);
@@ -430,37 +474,42 @@ export function GuitarArrangerDialog(props: {
   }
 
   /**
-   * Engrave the arrangement as notation: convert the confirmed document to
-   * MIDI (the same endpoint the download button uses) and hand it to the
-   * existing /sheets pipeline, which answers with score + tab PDFs.
+   * Engrave the arrangement preserving the chosen fingering: the confirmed
+   * document goes to POST /arrange/guitar/pdf, which converts it to MusicXML
+   * (with <technical> string/fret) and runs MuseScore on THAT. Never through
+   * plain MIDI: an auto-tab built from pitches would discard the chosen
+   * positions and user locks.
    */
   async function downloadPdf() {
     if (applied === null || pdfBusy !== null) return;
     track("guitar_arranger", { action: "pdf" });
     setPdfBusy(t("guitar_pdf_busy"));
     try {
-      const midiForm = new FormData();
-      midiForm.append(
+      const form = new FormData();
+      form.append(
         "document",
         new Blob([applied.text], { type: "application/json" }),
         "arrangement.json",
       );
-      const midiResp = await fetch("/arrange/guitar/midi", {
+      const resp = await fetch("/arrange/guitar/pdf", {
         method: "POST",
-        body: midiForm,
+        body: form,
       });
-      if (!midiResp.ok) {
-        throw new Error(await midiResp.text());
+      if (!resp.ok) {
+        // Structured backend errors carry a readable message in `detail`.
+        let message = await resp.text();
+        try {
+          const parsed = JSON.parse(message) as {
+            detail?: { message?: string };
+          };
+          if (parsed.detail?.message) message = parsed.detail.message;
+        } catch {
+          /* raw text body */
+        }
+        setError({ code: null, message, details: null });
+        return;
       }
-      const midiBlob = await midiResp.blob();
-      const sheetsForm = new FormData();
-      sheetsForm.append("midi", midiBlob, stem() + ".mid");
-      sheetsForm.append("quantized", "false");
-      const sheetsResp = await fetch("/sheets", { method: "POST", body: sheetsForm });
-      if (!sheetsResp.ok) {
-        throw new Error(await sheetsResp.text());
-      }
-      const zipBlob = await sheetsResp.blob();
+      const zipBlob = await resp.blob();
       // Stored, not deflated members — unpacking is a copy, same as OutputBar.
       const unpacked = unzipSync(new Uint8Array(await zipBlob.arrayBuffer()));
       const files: SheetFile[] = Object.entries(unpacked).map(([name, bytes]) => ({
@@ -470,7 +519,7 @@ export function GuitarArrangerDialog(props: {
       if (files.length === 0) {
         throw new Error("the server returned an empty archive");
       }
-      setPdf({ files, zipBlob, zipFilename: stem() + "_sheets.zip" });
+      setPdf({ files, zipBlob, zipFilename: stem() + "_score.zip" });
       setPdfOpen(true);
     } catch (e) {
       setError({ code: null, message: e instanceof Error ? e.message : String(e), details: null });
@@ -482,10 +531,17 @@ export function GuitarArrangerDialog(props: {
   const arrangement = applied?.arrangement ?? null;
   const phraseNotes: ArrangedNote[] =
     arrangement?.notes.filter((n) => n.phrase === phrase) ?? [];
+  const phraseEvents = groupPhraseEvents(phraseNotes);
+  const currentEvent: ArrangedNote[] =
+    phraseEvents.find((group) => group.some((n) => n.id === noteId)) ??
+    phraseEvents[0] ??
+    [];
   const selectedNote =
     phraseNotes.find((n) => n.id === noteId) ?? phraseNotes[0] ?? null;
   const handMetrics = phraseHandMetrics(phraseNotes);
   const phraseInfo = arrangement?.phrases.find((p) => p.index === phrase) ?? null;
+  const event = eventOf(applied?.arrangement ?? null, selectedNote);
+  const lockedInEvent = currentEvent.filter((n) => n.locked).length;
 
   return (
     // Above the page grain, below the drag-and-drop overlay (SheetsDialog pattern).
@@ -502,12 +558,13 @@ export function GuitarArrangerDialog(props: {
         className="flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-card border border-line-strong bg-surface shadow-overlay"
         onKeyDown={(e) => {
           if (e.key === "Escape") onClose();
-          if (
-            (e.key === "ArrowLeft" || e.key === "ArrowRight") &&
-            !isTypingTarget(e.target)
-          ) {
+          if (isTypingTarget(e.target)) return;
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
             e.preventDefault();
-            moveNote(e.key === "ArrowLeft" ? -1 : 1);
+            moveEvent(e.key === "ArrowLeft" ? -1 : 1);
+          } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            e.preventDefault();
+            moveNoteInEvent(e.key === "ArrowUp" ? -1 : 1);
           }
         }}
       >
@@ -607,27 +664,6 @@ export function GuitarArrangerDialog(props: {
                 {error.message}
               </span>
             )}
-            {error.code === "polyphonic_input" && (
-              <div className="mt-2 flex gap-2">
-                <Button
-                  kind="primary"
-                  pad="px-3 py-1.5"
-                  size="text-xs"
-                  disabled={loading}
-                  onClick={() => takeMelody("top")}
-                >
-                  {t("guitar_take_top")}
-                </Button>
-                <Button
-                  pad="px-3 py-1.5"
-                  size="text-xs"
-                  disabled={loading}
-                  onClick={() => takeMelody("bottom")}
-                >
-                  {t("guitar_take_bottom")}
-                </Button>
-              </div>
-            )}
           </div>
         )}
 
@@ -654,11 +690,36 @@ export function GuitarArrangerDialog(props: {
               {arrangement.melody_reduction.policy !== "off" && (
                 <span className="ml-auto font-mono text-[11px] text-faint">
                   {t("guitar_melody_summary", {
-                    policy: t(`guitar_melody_${arrangement.melody_reduction.policy}`),
+                    policy: t(
+                      `guitar_melody_${arrangement.melody_reduction.policy}_short`,
+                    ),
                     n: arrangement.melody_reduction.dropped_note_count,
                   })}
                 </span>
               )}
+            </div>
+
+            {/* Melody reduction: "all notes" is the default and the main
+                mode of the v3 chord solver; top/bottom are explicit opt-ins. */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-2.5">
+              <label
+                htmlFor="guitar-melody-select"
+                className="text-[12px] text-muted"
+              >
+                {t("guitar_melody_label")}
+              </label>
+              <select
+                id="guitar-melody-select"
+                className="rounded-card border border-line bg-surface px-2 py-1 text-[12px] text-content"
+                value={melodyPolicy}
+                disabled={loading}
+                title={t("guitar_melody_hint")}
+                onChange={(e) => takeMelody(e.target.value)}
+              >
+                <option value="off">{t("guitar_melody_off")}</option>
+                <option value="top">{t("guitar_melody_top")}</option>
+                <option value="bottom">{t("guitar_melody_bottom")}</option>
+              </select>
             </div>
 
             {/* Fretboard + note list of the selected phrase */}
@@ -668,6 +729,8 @@ export function GuitarArrangerDialog(props: {
                   <GuitarFretboard
                     arrangement={arrangement}
                     note={selectedNote}
+                    chordNotes={currentEvent}
+                    barres={event?.barres ?? []}
                     disabled={loading}
                     onSelect={(_id, s, f) => lockPosition(s, f)}
                   />
@@ -682,18 +745,44 @@ export function GuitarArrangerDialog(props: {
               />
             </div>
 
-            {/* Selected note + phrase metrics */}
+            {/* Selected note + chord info + phrase metrics */}
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-line px-5 py-3 text-[13px]">
               {selectedNote !== null && (
                 <>
                   <span className="font-semibold text-content">
                     {pitchName(selectedNote.pitch)}
                   </span>
+                  <span data-testid="guitar-event-size" className="text-muted">
+                    {currentEvent.length > 1
+                      ? t("guitar_chord_notes", { n: currentEvent.length })
+                      : t("guitar_single_note")}
+                  </span>
                   <span className="text-muted">
                     {t("guitar_hand_position", { n: selectedNote.hand_position })}
                   </span>
+                  {event?.barres.map((barre) => (
+                    <span
+                      key={`${barre.finger}-${barre.fret}`}
+                      data-testid="guitar-barre"
+                      className="text-muted"
+                    >
+                      {t("guitar_barre", {
+                        fret: barre.fret,
+                        from: barre.from_string,
+                        to: barre.to_string,
+                      })}
+                    </span>
+                  ))}
                   <span className="text-muted">
-                    {t("guitar_finger_label", { n: selectedNote.finger })}
+                    {t("guitar_locked_count", {
+                      n: lockedInEvent,
+                      total: currentEvent.length,
+                    })}
+                  </span>
+                  <span className="text-muted">
+                    {t("guitar_finger_label", {
+                      n: selectedNote.finger ?? t("guitar_finger_unknown"),
+                    })}
                   </span>
                   {selectedNote.locked && (
                     <Button
@@ -749,8 +838,19 @@ export function GuitarArrangerDialog(props: {
             >
               {playing ? t("guitar_pause") : t("guitar_play")}
             </Button>
-            <Button disabled={applied === null || loading} onClick={downloadMidi}>
+            <Button
+              disabled={applied === null || loading}
+              onClick={downloadMidi}
+              title={t("guitar_midi_tooltip")}
+            >
               {t("guitar_download_midi")}
+            </Button>
+            <Button
+              disabled={applied === null || loading}
+              onClick={downloadMusicxml}
+              title={t("guitar_fingering_tooltip")}
+            >
+              {t("guitar_download_musicxml")}
             </Button>
             <Button
               disabled={applied === null || loading}
@@ -762,6 +862,7 @@ export function GuitarArrangerDialog(props: {
             <Button
               disabled={applied === null || loading || pdfBusy !== null}
               onClick={downloadPdf}
+              title={t("guitar_fingering_tooltip")}
             >
               {pdfBusy ?? t("guitar_pdf")}
             </Button>

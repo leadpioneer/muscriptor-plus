@@ -136,7 +136,7 @@ afterEach(() => {
 });
 
 describe("GuitarArrangerDialog", () => {
-  it("sends the initial request without track/channel and renders schema v2", async () => {
+  it("sends the initial request without track/channel and renders schema v3", async () => {
     responses.push({ status: 200, body: ARRANGEMENT });
     renderDialog();
     await waitFor(() => {
@@ -157,10 +157,10 @@ describe("GuitarArrangerDialog", () => {
   it("rejects an unknown schema version with a readable error", async () => {
     responses.push({
       status: 200,
-      body: { ...ARRANGEMENT, schema_version: 3 },
+      body: { ...ARRANGEMENT, schema_version: 4 },
     });
     renderDialog();
-    expect(await screen.findByRole("alert")).toHaveTextContent(/schema_version 3/);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/schema_version 4/);
     // Nothing is rendered from an untrusted version.
     expect(screen.queryByText("Finger: 1")).not.toBeInTheDocument();
   });
@@ -477,42 +477,187 @@ describe("GuitarArrangerDialog", () => {
     expect(anchor.download).toBe("song.guitar-arrangement.json");
     const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
     const text = JSON.parse(await blob.text()) as GuitarArrangement;
-    expect(text.schema_version).toBe(2);
+    expect(text.schema_version).toBe(3);
     expect(text.notes[0].id).toBe(NOTE.id);
   });
 
-  it("offers melody reduction buttons on a polyphonic error", async () => {
-    const reduced = arrangement();
-    responses.push({
-      status: 422,
-      body: {
-        detail: {
-          code: "polyphonic_input",
-          message: "simultaneous note onsets at tick 0: pitches 60, 67",
-          details: { tick: 0, note_ids: ["a", "b"], pitches: [60, 67] },
-        },
+  it("shows the whole chord on the fretboard with a text barre, locked count", async () => {
+    // Open E major: six notes, one onset event, finger-1 barre strings 1–6.
+    const E_MAJOR: Array<[number, number, number]> = [
+      [64, 1, 0],
+      [59, 2, 0],
+      [56, 3, 1],
+      [52, 4, 2],
+      [47, 5, 2],
+      [40, 6, 0],
+    ];
+    const chord = arrangement();
+    chord.notes = E_MAJOR.map(([pitch, string, fret], i) => ({
+      ...JSON.parse(JSON.stringify(NOTE)),
+      id: `track:0/channel:0/note:${i + 1}`,
+      event_id: "event:0",
+      pitch,
+      string,
+      fret,
+      finger: fret === 0 ? 0 : fret,
+    }));
+    chord.events = [
+      {
+        id: "event:0",
+        index: 0,
+        phrase: 0,
+        onset_ticks: 0,
+        note_ids: chord.notes.map((n) => n.id),
+        hand_position: 1,
+        barres: [
+          {
+            finger: 1,
+            fret: 1,
+            from_string: 1,
+            to_string: 6,
+            note_ids: [
+              "track:0/channel:0/note:4",
+              "track:0/channel:0/note:1",
+            ],
+          },
+        ],
+        shape_cost: 1.9,
+        finger_assignment_complete: true,
+        generated_candidates: 1,
+        pruned_candidates: 0,
+        optimal_within: "all_candidates",
       },
+    ];
+    responses.push({ status: 200, body: chord });
+    const { container } = renderDialog();
+    // The first note of the chord (pitch 64, open string 1) is selected.
+    await screen.findByText("Finger: 0");
+    // The chord size is announced in text…
+    expect(screen.getByTestId("guitar-event-size")).toHaveTextContent(
+      "Chord: 6 notes",
+    );
+    expect(screen.getByTestId("guitar-barre")).toHaveTextContent(
+      "Barre: fret 1, strings 1–6",
+    );
+    expect(screen.getByText("Locked: 0/6")).toBeInTheDocument();
+    // …and every chord note is visible on the neck (the selected C4 note is
+    // rendered by the normal marker path; the others carry data-chord-note).
+    const svg = within(container.querySelector("svg") as unknown as HTMLElement);
+    expect(svg.getByLabelText("G#3: string 3, fret 1")).toBeInTheDocument();
+    expect(svg.getByLabelText("E2: string 6, fret 0")).toBeInTheDocument();
+  });
+
+  it("ArrowUp/ArrowDown move within one chord event, Left/Right across events", async () => {
+    const multi = arrangement();
+    // Two events: a dyad at tick 0 and a single note at tick 480. Ids must
+    // stay unique — the fixture NOTE2 keeps its own id.
+    const low = {
+      ...JSON.parse(JSON.stringify(NOTE)),
+      id: "track:0/channel:0/note:2",
+      pitch: 52,
+      string: 4,
+      fret: 2,
+      finger: 2,
+    };
+    const event2 = { ...JSON.parse(JSON.stringify(NOTE2)), id: "track:0/channel:0/note:9" };
+    multi.notes = [
+      JSON.parse(JSON.stringify(NOTE)),
+      low,
+      event2,
+    ];
+    multi.metrics.note_count = 3;
+    responses.push({ status: 200, body: multi });
+    renderDialog();
+    await screen.findByText("Finger: 1");
+    const dialog = screen.getByRole("dialog");
+    // Up/Down move between the two notes of the same onset event…
+    fireEvent.keyDown(dialog, { key: "ArrowDown" });
+    expect(await screen.findByText("Finger: 2")).toBeInTheDocument();
+    fireEvent.keyDown(dialog, { key: "ArrowUp" });
+    expect(await screen.findByText("Finger: 1")).toBeInTheDocument();
+    // …and Left/Right move to the neighbouring onset event (Finger: 3 note).
+    fireEvent.keyDown(dialog, { key: "ArrowRight" });
+    expect(await screen.findByText("Finger: 3")).toBeInTheDocument();
+    fireEvent.keyDown(dialog, { key: "ArrowLeft" });
+    expect(await screen.findByText("Finger: 1")).toBeInTheDocument();
+  });
+
+  it("sends every lock of a chord event in one request", async () => {
+    const chord = arrangement();
+    chord.notes = [
+      JSON.parse(JSON.stringify(NOTE)),
+      {
+        ...JSON.parse(JSON.stringify(NOTE)),
+        id: "track:0/channel:0/note:2",
+        pitch: 52,
+        string: 4,
+        fret: 2,
+        finger: 2,
+      },
+    ];
+    chord.metrics.note_count = 2;
+    responses.push({ status: 200, body: arrangement() });
+    responses.push({ status: 200, body: chord });
+    responses.push({ status: 200, body: chord });
+    const user = userEvent.setup();
+    renderDialog();
+    await screen.findByText("Finger: 1");
+    // Lock the first note of the chord…
+    await user.click(
+      screen.getByRole("button", { name: "C4: string 2, fret 0, hand positions 5, 6" }),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    // …then select the second note and lock it too: the request must carry
+    // BOTH locks together.
+    await user.click(screen.getByRole("button", { name: "E3: string 4, fret 2" }));
+    await user.click(
+      screen.getByRole("button", { name: "E3: string 2, fret 0, hand positions 5, 6" }),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    const [, init] = fetchMock.mock.calls[2];
+    expect(formOverrides(init)).toEqual({
+      version: 1,
+      locks: [
+        { note_id: "track:0/channel:0/note:1", string: 2, fret: 0 },
+        { note_id: "track:0/channel:0/note:2", string: 2, fret: 0 },
+      ],
     });
+  });
+
+  it("switches the melody policy through the selector, defaulting to all notes", async () => {
+    const reduced = arrangement();
+    responses.push({ status: 200, body: arrangement() });
     responses.push({ status: 200, body: reduced });
     reduced.melody_reduction = { policy: "top", dropped_note_count: 0, dropped: [] };
     const user = userEvent.setup();
     renderDialog();
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/Several notes start at the same moment/);
+    await screen.findByText("Finger: 1");
+    // Default: all notes ("off" is the main mode of the chord solver).
+    const selector = screen.getByLabelText("Melody") as HTMLSelectElement;
+    expect(selector.value).toBe("off");
     expect(
-      screen.getByRole("button", { name: "Take the top voice" }),
+      screen.getByRole("option", { name: "All notes" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Take the bottom voice" }),
+      screen.getByRole("option", {
+        name: "Highest note of each simultaneous-onset event",
+      }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Take the top voice" }));
+    expect(
+      screen.getByRole("option", {
+        name: "Lowest note of each simultaneous-onset event",
+      }),
+    ).toBeInTheDocument();
+    await user.selectOptions(selector, "top");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const [, init] = fetchMock.mock.calls[1];
     const form = init.body as FormData;
     expect(formField(form, "melody")).toBe("top");
     expect(await screen.findByText("Finger: 1")).toBeInTheDocument();
-    // The reduction is reported on screen.
-    expect(screen.getByText("Melody: top voice · 0 notes dropped")).toBeInTheDocument();
+    // The reduction is reported on screen with the short policy name.
+    expect(
+      screen.getByText("Melody: top note · 0 notes dropped"),
+    ).toBeInTheDocument();
   });
 
   it("auditions the arrangement through the engine at nominal tempo", async () => {
@@ -582,35 +727,42 @@ describe("GuitarArrangerDialog", () => {
     expect(await blob.text()).toBe(TAB);
   });
 
-  it("engraves the arrangement via /sheets and shows the PDF set", async () => {
-    // A real (tiny) members-stored zip, as /sheets produces.
+  it("engraves the arrangement via /arrange/guitar/pdf and shows the PDF set", async () => {
+    // A real (tiny) members-stored zip, as the fingering-preserving endpoint
+    // produces: the engraved PDF plus the intermediate MusicXML.
     const zip = zipSync({
       "full_score.pdf": new Uint8Array([1, 2, 3]),
-      "01_acoustic_guitar_tab.pdf": new Uint8Array([4, 5]),
+      "arrangement.musicxml": new Uint8Array([60, 62]),
     });
     responses.push({ status: 200, body: ARRANGEMENT });
-    responses.push({ status: 200, body: new Uint8Array([77, 84, 104, 100]) }); // MThd
     responses.push({ status: 200, body: zip });
     const user = userEvent.setup();
     renderDialog();
     await screen.findByText("Finger: 1");
     await user.click(screen.getByRole("button", { name: "PDF (score + tab)" }));
-    // Request order: arrangement → MIDI, then MIDI → /sheets.
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    expect(fetchMock.mock.calls[1][0]).toBe("/arrange/guitar/midi");
-    expect(fetchMock.mock.calls[2][0]).toBe("/sheets");
-    const sheetsForm = fetchMock.mock.calls[2][1].body as FormData;
-    expect(sheetsForm.get("quantized")).toBe("false");
-    expect((sheetsForm.get("midi") as File).name).toBe("song.mid");
+    // One request: the document goes straight to the fingering-preserving
+    // endpoint — never the MIDI → /sheets auto-tab detour.
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1][0]).toBe("/arrange/guitar/pdf");
+    const form = fetchMock.mock.calls[1][1].body as FormData;
+    expect((form.get("document") as File).name).toBe("arrangement.json");
     // The engraved set opens in the familiar sheets dialog.
     expect(await screen.findByText("full_score.pdf")).toBeInTheDocument();
-    expect(screen.getByText("01_acoustic_guitar_tab.pdf")).toBeInTheDocument();
+    expect(screen.getAllByText("arrangement.musicxml").length).toBeGreaterThan(0);
   });
 
-  it("shows a sheets failure (e.g. no MuseScore) without closing the lab", async () => {
+  it("shows a MuseScore failure (503) without closing the lab", async () => {
     responses.push({ status: 200, body: ARRANGEMENT });
-    responses.push({ status: 200, body: new Uint8Array([77]) });
-    responses.push({ status: 503, body: "MuseScore was not found on the server" });
+    responses.push({
+      status: 503,
+      body: JSON.stringify({
+        detail: {
+          code: "musescore_unavailable",
+          message: "MuseScore was not found on the server",
+          details: {},
+        },
+      }),
+    });
     const user = userEvent.setup();
     renderDialog();
     await screen.findByText("Finger: 1");

@@ -1,8 +1,9 @@
-/** Shared schema-v2 fixtures for the Guitar Arranger Lab tests. */
+/** Shared schema-v3 fixtures for the Guitar Arranger Lab tests. */
 import type { ArrangedNote, GuitarArrangement } from "../guitar-arrangement";
 
 export const NOTE: ArrangedNote = {
   id: "track:0/channel:0/note:1",
+  event_id: "event:0",
   phrase: 0,
   pitch: 60,
   onset_ticks: 0,
@@ -27,7 +28,7 @@ export const NOTE: ArrangedNote = {
 };
 
 export const ARRANGEMENT: GuitarArrangement = {
-  schema_version: 2,
+  schema_version: 3,
   source: {
     filename: "song.mid",
     ticks_per_beat: 480,
@@ -43,14 +44,25 @@ export const ARRANGEMENT: GuitarArrangement = {
     max_fret: 24,
     max_hand_position: 21,
   },
+  polyphony_analysis: {
+    note_count: 1,
+    onset_event_count: 1,
+    polyphonic_event_count: 0,
+    largest_onset_group: 1,
+    overlapping_region_count: 0,
+    max_active_notes: 1,
+    strictly_monophonic: true,
+  },
   phrases: [
-    { index: 0, start_tick: 0, end_tick: 1440, cost: 0.5, fret_travel: 3, string_travel: 1 },
+    { index: 0, start_tick: 0, end_tick: 1440, cost: 0.5, event_count: 1, fret_travel: 3, string_travel: 1 },
   ],
+  events: [],
   notes: [NOTE],
   melody_reduction: { policy: "off", dropped_note_count: 0, dropped: [] },
   metrics: {
     note_count: 1,
     phrase_count: 1,
+    event_count: 1,
     total_cost: 0.5,
     position_change_count: 0,
     total_hand_position_travel: 0,
@@ -59,8 +71,6 @@ export const ARRANGEMENT: GuitarArrangement = {
     finger_usage: { 0: 0, 1: 1, 2: 0, 3: 0, 4: 0 },
     total_fret_travel: 3,
     total_string_travel: 1,
-    largest_fret_transition: 3,
-    largest_string_transition: 1,
     locked_notes: 0,
   },
 };

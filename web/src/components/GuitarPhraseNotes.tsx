@@ -71,7 +71,9 @@ export function GuitarPhraseNotes(props: {
                 {t("guitar_string_fret", { s: note.string, f: note.fret })}
               </span>
               <span className="text-faint">
-                {t("guitar_finger_short", { n: note.finger })}
+                {t("guitar_finger_short", {
+                  n: note.finger ?? t("guitar_finger_unknown"),
+                })}
               </span>
               {note.locked && (
                 <span className="ml-auto flex items-center gap-1 text-[#e0b25a]">

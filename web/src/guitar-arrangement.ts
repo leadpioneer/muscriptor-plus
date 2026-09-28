@@ -6,8 +6,11 @@
  * re-fetched with the original MIDI plus the full lock set. Nothing in this
  * module edits strings/frets locally.
  *
- * The response is schema v2 as produced by
- * `muscriptor.guitar_arrangement.serialization` вЂ” byte-stable, no timestamps.
+ * The response is schema v3 as produced by
+ * `muscriptor.guitar_arrangement.serialization` (byte-stable, no timestamps).
+ * Legacy schema-v2 documents (monophonic, no events/polyphony analysis) are
+ * still parsed for display; the UI's chord view is derived from shared
+ * onsets, which is exactly what v3's `events` record.
  */
 
 export type FretPosition = { string: number; fret: number };
@@ -21,6 +24,8 @@ export type FingeringState = {
 
 export type ArrangedNote = {
   id: string;
+  /** The onset event this note belongs to (schema v3). */
+  event_id?: string;
   phrase: number;
   pitch: number;
   onset_ticks: number;
@@ -29,10 +34,43 @@ export type ArrangedNote = {
   string: number;
   fret: number;
   hand_position: number;
-  finger: number;
+  /** null when the backend's finger annotation is incomplete. */
+  finger: number | null;
   locked: boolean;
   legal_positions: FretPosition[];
   legal_fingerings: FingeringState[];
+};
+
+/** One onset event of the schema-v3 document (1–6 notes). */
+export type GuitarEvent = {
+  id: string;
+  index: number;
+  phrase: number;
+  onset_ticks: number;
+  note_ids: string[];
+  hand_position: number;
+  barres: {
+    finger: number;
+    fret: number;
+    from_string: number;
+    to_string: number;
+    note_ids: string[];
+  }[];
+  shape_cost: number;
+  finger_assignment_complete: boolean;
+  generated_candidates: number;
+  pruned_candidates: number;
+  optimal_within: string;
+};
+
+export type PolyphonyAnalysis = {
+  note_count: number;
+  onset_event_count: number;
+  polyphonic_event_count: number;
+  largest_onset_group: number;
+  overlapping_region_count: number;
+  max_active_notes: number;
+  strictly_monophonic: boolean;
 };
 
 export type GuitarPhrase = {
@@ -40,12 +78,13 @@ export type GuitarPhrase = {
   start_tick: number;
   end_tick: number;
   cost: number;
+  event_count: number;
   fret_travel: number;
   string_travel: number;
 };
 
 export type GuitarArrangement = {
-  schema_version: 2;
+  schema_version: 3;
   source: {
     filename: string;
     ticks_per_beat: number;
@@ -61,7 +100,9 @@ export type GuitarArrangement = {
     max_fret: number;
     max_hand_position: number;
   };
+  polyphony_analysis?: PolyphonyAnalysis;
   phrases: GuitarPhrase[];
+  events?: GuitarEvent[];
   notes: ArrangedNote[];
   /** What the melody reduction removed (policy "off" when nothing ran). */
   melody_reduction: {
@@ -72,6 +113,7 @@ export type GuitarArrangement = {
   metrics: {
     note_count: number;
     phrase_count: number;
+    event_count: number;
     total_cost: number;
     position_change_count: number;
     total_hand_position_travel: number;
@@ -80,8 +122,6 @@ export type GuitarArrangement = {
     finger_usage: Record<string, number>;
     total_fret_travel: number;
     total_string_travel: number;
-    largest_fret_transition: number;
-    largest_string_transition: number;
     locked_notes: number;
   };
 };
@@ -129,9 +169,9 @@ export function parseArrangement(raw: unknown): GuitarArrangement {
     throw new GuitarSchemaError("arrangement response is not a JSON object");
   }
   const doc = raw as Record<string, unknown>;
-  if (doc.schema_version !== 2) {
+  if (doc.schema_version !== 2 && doc.schema_version !== 3) {
     throw new GuitarSchemaError(
-      `unsupported arrangement schema_version ${JSON.stringify(doc.schema_version)}, expected 2`,
+      `unsupported arrangement schema_version ${JSON.stringify(doc.schema_version)}, expected 2 or 3`,
     );
   }
   if (!Array.isArray(doc.notes) || !Array.isArray(doc.phrases)) {
@@ -300,5 +340,45 @@ export function fingeringsAt(
 ): FingeringState[] {
   return note.legal_fingerings.filter(
     (f) => f.string === string && f.fret === fret,
+  );
+}
+
+/**
+ * Groups one phrase's notes into onset events (pitch descending, then id —
+ * the same canonical order the backend uses). Used for the chord view and
+ * the Arrow-key navigation; equivalent to the document's `events` list.
+ */
+export function groupPhraseEvents(notes: ArrangedNote[]): ArrangedNote[][] {
+  const byOnset = new Map<number, ArrangedNote[]>();
+  for (const note of notes) {
+    const group = byOnset.get(note.onset_ticks);
+    if (group) {
+      group.push(note);
+    } else {
+      byOnset.set(note.onset_ticks, [note]);
+    }
+  }
+  return [...byOnset.keys()]
+    .sort((a, b) => a - b)
+    .map((onset) =>
+      (byOnset.get(onset) ?? []).sort(
+        (a, b) => b.pitch - a.pitch || a.id.localeCompare(b.id),
+      ),
+    );
+}
+
+/** The document's event record for a note (when the backend sent events). */
+export function eventOf(
+  arrangement: GuitarArrangement | null,
+  note: ArrangedNote | null,
+): GuitarEvent | null {
+  if (arrangement === null || note === null || !Array.isArray(arrangement.events))
+    return null;
+  return (
+    arrangement.events.find(
+      (e) =>
+        e.note_ids.includes(note.id) ||
+        (e.onset_ticks === note.onset_ticks && e.phrase === note.phrase),
+    ) ?? null
   );
 }
