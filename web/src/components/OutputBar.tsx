@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { unzipSync } from "fflate";
 import { Button } from "./Button";
 import { SheetsDialog, type SheetFile } from "./SheetsDialog";
+import { GuitarArrangerDialog } from "./GuitarArrangerDialog";
 import type { TranscriptionResult } from "../hooks/useTranscription";
 import { useI18n } from "../i18n";
 import { IconChevron, IconDownload } from "./icons";
@@ -66,6 +67,9 @@ export function OutputBar(props: {
     zipFilename: string;
   } | null>(null);
   const [sheetsOpen, setSheetsOpen] = useState(false);
+  // The Guitar Arranger Lab: the finished transcription's MIDI is passed in,
+  // so Mode A (edit the current result) never asks the user to re-upload it.
+  const [arrangerOpen, setArrangerOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const ready = result !== null;
 
@@ -243,6 +247,15 @@ export function OutputBar(props: {
       )}
 
       <div className="ml-auto flex items-center gap-2.5">
+        <Button
+          disabled={!ready}
+          title={t("guitar_open")}
+          onClick={() => {
+            setArrangerOpen(true);
+          }}
+        >
+          {t("guitar_open")}
+        </Button>
         <div className="relative" ref={menuRef}>
           <Button
             kind={ready ? "primary" : "secondary"}
@@ -373,6 +386,14 @@ export function OutputBar(props: {
           zipFilename={sheets.zipFilename}
           quantized={result?.quantizedMidi != null}
           onClose={() => setSheetsOpen(false)}
+        />
+      )}
+
+      {ready && arrangerOpen && result !== null && (
+        <GuitarArrangerDialog
+          initialMidi={result.midi}
+          initialFilename={result.filename}
+          onClose={() => setArrangerOpen(false)}
         />
       )}
     </div>

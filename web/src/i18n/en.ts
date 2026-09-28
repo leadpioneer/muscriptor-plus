@@ -160,6 +160,66 @@ export const EN: Dict = {
     "MuScriptor Plus is an enhanced fork of the MuScriptor transcription model: it turns raw audio into per-instrument MIDI. The model was trained by",
   footer_and: "and",
 
+  // Guitar Arranger Lab
+  guitar_open: "Edit fingering",
+  guitar_title: "Guitar Arranger Lab",
+  guitar_open_midi: "Open MIDI",
+  guitar_loading: "Arranging…",
+  guitar_pick_track:
+    "This MIDI has several note-bearing tracks. Pick one:",
+  guitar_track_option: "{name} — track {track}, channel {channel} — {n} notes",
+  guitar_track_unnamed: "Unnamed track",
+  guitar_phrase_option: "Phrase {n} · {count} notes",
+  guitar_string_fret: "s{s} f{f}",
+  guitar_finger_short: "f{n}",
+  guitar_locked: "locked",
+  guitar_midi_pitch: "MIDI pitch {pitch}",
+  guitar_note_aria: "{note}: string {s}, fret {f}",
+  guitar_hand_position: "Hand position: {n}",
+  guitar_finger_label: "Finger: {n}",
+  guitar_unlock: "Unlock position",
+  guitar_hint:
+    "Every marked position produces the same pitch. Locking one position recalculates neighboring notes for the whole phrase.",
+  guitar_download: "Download arrangement.json",
+  guitar_position_changes: "Position changes: {n}",
+  guitar_hand_travel: "Hand travel: {n}",
+  guitar_largest_shift: "Largest shift: {n}",
+  guitar_phrase_cost: "Phrase cost: {n}",
+  guitar_error_line: "Arrangement failed: {message}",
+  guitar_no_source:
+    "Load a MIDI file to inspect and fix its guitar fingering — no transcription needed.",
+  guitar_error_polyphonic_input:
+    "Several notes start at the same moment (tick {tick}, pitches {pitches}). The arranger optimizes a single melodic line — pick a monophonic track or extract the melody first.",
+  guitar_error_invalid_midi: "This file could not be read as a MIDI file.",
+  guitar_error_unplayable_note:
+    "Pitch {pitch} is outside the guitar's range ({low}–{high}) in this tuning.",
+  guitar_error_track_not_found: "No note-bearing track matches this choice.",
+  guitar_error_invalid_overrides:
+    "A fixed position contradicts the MIDI input.",
+  guitar_error_invalid_melody_policy:
+    "Unknown melody reduction policy.",
+  guitar_take_top: "Take the top voice",
+  guitar_take_bottom: "Take the bottom voice",
+  guitar_melody_top: "top voice",
+  guitar_melody_bottom: "bottom voice",
+  guitar_melody_summary: "Melody: {policy} · {n} notes dropped",
+  guitar_play: "Listen",
+  guitar_pause: "Pause",
+  guitar_play_title:
+    "Play the arrangement at a nominal 120 BPM (the document has no tempo map).",
+  guitar_download_midi: "Download arrangement.mid",
+  guitar_tab_button: "Tablature",
+  guitar_tab_title: "Tabulature (16th-note grid, bar lines every 4 beats)",
+  guitar_download_tab: "Download tab (.txt)",
+  guitar_pdf: "PDF (score + tab)",
+  guitar_pdf_busy: "Generating PDF…",
+  guitar_fretboard_title: "Guitar fretboard with the selected note and its legal positions",
+  guitar_fretboard_aria: "Fretboard: {note} currently at string {s}, fret {f}",
+  guitar_aria_position:
+    "{note}: string {s}, fret {f}, hand position {hp}, finger {fg}",
+  guitar_aria_position_multi: "{note}: string {s}, fret {f}, hand positions {hp}",
+  guitar_fingering_combo: "hand {hp} / finger {fg}",
+
   // FAQ
   faq_title: "Frequently asked questions",
 };

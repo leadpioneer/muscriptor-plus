@@ -15,7 +15,7 @@ const SOUNDFONT_URL = "/soundfonts/MuseScore_General.sf3";
 const DRUM_CHANNEL = 9;
 
 /** Map a muscriptor instrument-group name to a General MIDI program number. */
-const GM_PROGRAM: Record<string, number> = {
+export const GM_PROGRAM: Record<string, number> = {
   acoustic_piano: 0,
   electric_piano: 4,
   chromatic_percussion: 9,
@@ -65,7 +65,7 @@ export const INSTRUMENT_ORDER: string[] = [...Object.keys(GM_PROGRAM), "drums"];
 /** Velocity used for every synthesized note. */
 const NOTE_VELOCITY = 100;
 
-type NoteOpts = {
+export type NoteOpts = {
   instrument: string;
   pitch: number;
   start: number;
@@ -497,6 +497,25 @@ export class AudioEngine {
   scheduleStop(t: number) {
     this.autoStopAt = t;
     this.scheduleStopRaw(t);
+  }
+
+  /** A copy of every scheduled note (see {@link replaceNotes}). */
+  snapshotNotes(): NoteOpts[] {
+    return this.allNotes.map((n) => ({ ...n }));
+  }
+
+  /**
+   * Swap in a completely different note set (the Guitar Arranger Lab uses this
+   * to audition an arrangement through the same synth) and rewind to 0.
+   * The previous set is expected to be restored by the caller —
+   * snapshot it with {@link snapshotNotes} first.
+   */
+  replaceNotes(notes: NoteOpts[], autoStopAt: number | null = null) {
+    this.stop();
+    this.allNotes = notes.map((n) => ({ ...n }));
+    this.pendingNotes = [];
+    this.autoStopAt = autoStopAt;
+    if (autoStopAt !== null) this.scheduleStopRaw(autoStopAt);
   }
 
   private scheduleStopRaw(at: number) {

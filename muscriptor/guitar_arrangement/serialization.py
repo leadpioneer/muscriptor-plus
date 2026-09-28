@@ -85,6 +85,13 @@ def solution_to_dict(solution: ArrangementSolution) -> dict:
             "max_fret": solution.config.max_fret,
             "max_hand_position": solution.config.hand_position_limit,
         },
+        # What the melody reduction removed, when the caller chose a policy:
+        # kept notes are untouched, this lists exactly what was dropped.
+        "melody_reduction": (
+            solution.melody_reduction.to_dict()
+            if solution.melody_reduction is not None
+            else {"policy": "off", "dropped_note_count": 0, "dropped": []}
+        ),
         "config": {**asdict(solution.config)},
         "phrases": [
             {

@@ -197,6 +197,65 @@ export const RU: Dict = {
   instr_synth_lead: "Синтезатор-лид",
   instr_synth_pad: "Синтезаторный пэд",
   instr_drums: "Ударные",
+
+  // Guitar Arranger Lab
+  guitar_open: "Исправить аппликатуру",
+  guitar_title: "Гитарная лаборатория аппликатуры",
+  guitar_open_midi: "Открыть MIDI",
+  guitar_loading: "Считаю аппликатуру…",
+  guitar_pick_track: "В этом MIDI несколько дорожек с нотами. Выберите одну:",
+  guitar_track_option: "{name} — дорожка {track}, канал {channel} — нот: {n}",
+  guitar_track_unnamed: "Дорожка без имени",
+  guitar_phrase_option: "Фраза {n} · нот: {count}",
+  guitar_string_fret: "стр.{s} лад {f}",
+  guitar_finger_short: "п{n}",
+  guitar_locked: "фикс.",
+  guitar_midi_pitch: "MIDI-высота {pitch}",
+  guitar_note_aria: "{note}: струна {s}, лад {f}",
+  guitar_hand_position: "Позиция кисти: {n}",
+  guitar_finger_label: "Палец: {n}",
+  guitar_unlock: "Снять фиксацию",
+  guitar_hint:
+    "Все отмеченные позиции дают правильную высоту ноты. После фиксации соседние ноты будут пересчитаны для удобства всей фразы.",
+  guitar_download: "Скачать arrangement.json",
+  guitar_position_changes: "Смен позиции: {n}",
+  guitar_hand_travel: "Переносы кисти: {n}",
+  guitar_largest_shift: "Наибольший сдвиг: {n}",
+  guitar_phrase_cost: "Стоимость фразы: {n}",
+  guitar_error_line: "Ошибка аранжировки: {message}",
+  guitar_no_source:
+    "Загрузите MIDI-файл, чтобы посмотреть и поправить гитарную аппликатуру — расшифровка не нужна.",
+  guitar_error_polyphonic_input:
+    "В дорожке есть ноты, начинающиеся одновременно (тик {tick}, высоты {pitches}). Аранжировщик оптимизирует одну мелодическую линию — выберите монодорожку или сначала извлеките мелодию.",
+  guitar_error_invalid_midi: "Файл не удалось прочитать как MIDI.",
+  guitar_error_unplayable_note:
+    "Высота {pitch} вне диапазона гитары в этой настройке ({low}–{high}).",
+  guitar_error_track_not_found: "Среди дорожек нет подходящей с нотами.",
+  guitar_error_invalid_overrides:
+    "Фиксированная позиция противоречит исходному MIDI.",
+  guitar_error_invalid_melody_policy:
+    "Неизвестная политика извлечения мелодии.",
+  guitar_take_top: "Взять верхний голос",
+  guitar_take_bottom: "Взять нижний голос",
+  guitar_melody_top: "верхний голос",
+  guitar_melody_bottom: "нижний голос",
+  guitar_melody_summary: "Мелодия: {policy} · отброшено нот: {n}",
+  guitar_play: "Прослушать",
+  guitar_pause: "Пауза",
+  guitar_play_title:
+    "Проигрывание на условных 120 BPM — в документе нет карты темпов.",
+  guitar_download_midi: "Скачать arrangement.mid",
+  guitar_tab_button: "Табулатура",
+  guitar_tab_title: "Табулатура (сетка 16-х, черты каждые 4 доли)",
+  guitar_download_tab: "Скачать таб (.txt)",
+  guitar_pdf: "PDF (ноты + таб)",
+  guitar_pdf_busy: "Генерирую PDF…",
+  guitar_fretboard_title: "Гриф с выбранной нотой и её допустимыми позициями",
+  guitar_fretboard_aria: "Гриф: {note} сейчас на струне {s}, лад {f}",
+  guitar_aria_position:
+    "{note}: струна {s}, лад {f}, позиция кисти {hp}, палец {fg}",
+  guitar_aria_position_multi: "{note}: струна {s}, лад {f}, позиции кисти {hp}",
+  guitar_fingering_combo: "кисть {hp} / палец {fg}",
 };
 
 /** FAQ pairs; answers support `[label](href)` links and `code` spans. */

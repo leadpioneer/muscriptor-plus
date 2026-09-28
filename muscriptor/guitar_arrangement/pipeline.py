@@ -7,8 +7,9 @@ Typer, so the whole flow stays testable without either.
 
 import dataclasses
 
-from .errors import InvalidOverridesError
+from .errors import InvalidMelodyPolicyError, InvalidOverridesError
 from .fretboard import resolve_tuning
+from .melody import reduce_to_melody
 from .midi_input import check_monophonic, parse_midi, select_notes
 from .models import ArrangementSolution, FretPosition, SolverConfig, SourceInfo
 from .phrases import split_phrases
@@ -25,6 +26,7 @@ def arrange(
     tuning_name: str = "standard",
     max_fret: int = 24,
     phrase_gap_beats: float = 1.0,
+    melody_policy: str = "off",
     overrides_text: str | None = None,
     config: SolverConfig | None = None,
 ) -> dict:
@@ -38,6 +40,7 @@ def arrange(
             tuning_name=tuning_name,
             max_fret=max_fret,
             phrase_gap_beats=phrase_gap_beats,
+            melody_policy=melody_policy,
             overrides_text=overrides_text,
             config=config,
         )
@@ -53,16 +56,22 @@ def arrange_solution(
     tuning_name: str = "standard",
     max_fret: int = 24,
     phrase_gap_beats: float = 1.0,
+    melody_policy: str = "off",
     overrides_text: str | None = None,
     config: SolverConfig | None = None,
 ) -> ArrangementSolution:
-    """Parse, select, phrase, lock and solve.
+    """Parse, select, reduce, phrase, lock and solve.
 
     Returns the full solution object (the CLI needs phrase internals for
     `--explain`); serialization happens on top. Raises a
     `GuitarArrangementError` subclass for every unsupported or contradictory
     input — nothing is ever handled by a silent fallback.
     """
+    if melody_policy not in ("off", "top", "bottom"):
+        raise InvalidMelodyPolicyError(
+            f"unknown melody policy {melody_policy!r} "
+            "(expected off, top or bottom)"
+        )
     if config is None:
         config = SolverConfig(
             max_fret=max_fret, phrase_gap_beats=phrase_gap_beats
@@ -70,12 +79,16 @@ def arrange_solution(
     tuning = resolve_tuning(tuning_name)
     parsed = parse_midi(midi_data)
     selected = select_notes(parsed, track=track, channel=channel)
-    check_monophonic(selected.notes)
+    reduction = None
+    notes = selected.notes
+    if melody_policy != "off":
+        notes, reduction = reduce_to_melody(notes, melody_policy)
+    check_monophonic(notes)
     phrases = split_phrases(
-        selected.notes, parsed.ticks_per_beat, config.phrase_gap_beats
+        notes, parsed.ticks_per_beat, config.phrase_gap_beats
     )
     locked = (
-        _validate_locks(selected.notes, overrides_text, tuning, config)
+        _validate_locks(notes, overrides_text, tuning, config)
         if overrides_text
         else {}
     )
@@ -93,6 +106,7 @@ def arrange_solution(
         phrases=solve_phrases(
             phrases, tuning, config, parsed.ticks_per_beat, locked
         ),
+        melody_reduction=reduction,
     )
 
 

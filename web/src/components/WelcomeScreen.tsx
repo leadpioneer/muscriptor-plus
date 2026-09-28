@@ -9,6 +9,7 @@ import clsx from "clsx";
 import { Button } from "./Button";
 import { ConditioningPanel } from "./ConditioningPanel";
 import { MidiToSheets } from "./MidiToSheets";
+import { GuitarArrangerEntry } from "./GuitarArrangerDialog";
 import { useI18n } from "../i18n";
 import type { AppError, SubmitState } from "../App";
 
@@ -181,6 +182,7 @@ export function WelcomeScreen(props: {
               {loadingExample ? t("loading_example") : t("try_example")}
             </Button>
             <MidiToSheets />
+            <GuitarArrangerEntry />
           </div>
         ) : (
           <div className="flex flex-col items-start gap-2.5 px-8 py-7">

@@ -121,6 +121,60 @@ def test_overrides_file_pins_a_position(tmp_path):
     assert (note["string"], note["fret"]) == (3, 9)
 
 
+def test_melody_flag_reduces_polyphonic_input(tmp_path):
+    path = _write_midi(tmp_path, [(60, 0, 240), (67, 0, 240), (72, 240, 240)])
+    output = tmp_path / "arrangement.json"
+    # Default: refused.
+    result = runner.invoke(app, ["arrange-guitar", str(path)])
+    assert result.exit_code == 1
+    assert "simultaneous note onsets" in result.output
+    # --melody top: the dyad collapses to the highest note.
+    result = runner.invoke(
+        app, ["arrange-guitar", str(path), "--melody", "top", "--output", str(output)]
+    )
+    assert result.exit_code == 0
+    document = json.loads(output.read_text(encoding="utf-8"))
+    assert document["melody_reduction"]["policy"] == "top"
+    assert document["melody_reduction"]["dropped_note_count"] == 1
+    assert [note["pitch"] for note in document["notes"]] == [67, 72]
+
+
+def test_unknown_melody_flag_value_fails_cleanly(tmp_path):
+    path = _write_midi(tmp_path, [(64, 0, 240)])
+    result = runner.invoke(app, ["arrange-guitar", str(path), "--melody", "magic"])
+    assert result.exit_code == 1
+    assert "unknown melody policy" in result.output
+
+
+def test_guitar_tab_command_writes_tab_and_midi(tmp_path):
+    midi_path = _write_midi(tmp_path, [(64, 0, 240), (67, 240, 240)])
+    arrangement = tmp_path / "arrangement.json"
+    result = runner.invoke(
+        app,
+        ["arrange-guitar", str(midi_path), "--output", str(arrangement)],
+    )
+    assert result.exit_code == 0
+    tab_path = tmp_path / "tab.txt"
+    midi_out = tmp_path / "out.mid"
+    result = runner.invoke(
+        app,
+        ["guitar-tab", str(arrangement), "--output", str(tab_path), "--midi", str(midi_out)],
+    )
+    assert result.exit_code == 0, result.output
+    tab = tab_path.read_text(encoding="utf-8")
+    assert len(tab.splitlines()) == 6  # six string lines
+    assert midi_out.read_bytes().startswith(b"MThd")
+    assert "MIDI written" in result.output
+
+
+def test_guitar_tab_command_rejects_a_non_arrangement_file(tmp_path):
+    bogus = tmp_path / "bogus.json"
+    bogus.write_text("{\"hello\": 1}", encoding="utf-8")
+    result = runner.invoke(app, ["guitar-tab", str(bogus)])
+    assert result.exit_code == 1
+    assert "unsupported arrangement schema_version" in result.output
+
+
 def test_transcription_model_is_never_loaded(tmp_path):
     path = _write_midi(tmp_path, [(64, 0, 240)])
     with patch(

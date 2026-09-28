@@ -14,6 +14,7 @@ export default defineConfig({
         "/instruments",
         "/auralize",
         "/sheets",
+        "/arrange",
         "/health",
         "/soundfonts",
       ].map((path) => [

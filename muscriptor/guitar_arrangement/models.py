@@ -181,6 +181,32 @@ class PhraseSolution:
 
 
 @dataclass(frozen=True)
+class MelodyReduction:
+    """What a melody reduction did, for the arrangement JSON.
+
+    Produced by `melody.reduce_to_melody` and attached to the solution when
+    the caller chose a non-`off` melody policy.
+    """
+
+    policy: str
+    dropped: tuple[MidiNote, ...]
+
+    @property
+    def dropped_note_count(self) -> int:
+        return len(self.dropped)
+
+    def to_dict(self) -> dict:
+        return {
+            "policy": self.policy,
+            "dropped_note_count": self.dropped_note_count,
+            "dropped": [
+                {"tick": note.onset_ticks, "pitch": note.pitch}
+                for note in self.dropped
+            ],
+        }
+
+
+@dataclass(frozen=True)
 class ArrangementSolution:
     """Everything the JSON serializer needs, no more."""
 
@@ -188,3 +214,6 @@ class ArrangementSolution:
     tuning: GuitarTuning
     config: SolverConfig
     phrases: tuple[PhraseSolution, ...]
+    # Set when the input was reduced to one melodic line before solving
+    # (melody policy `top`/`bottom`); None when no reduction ran.
+    melody_reduction: MelodyReduction | None = None

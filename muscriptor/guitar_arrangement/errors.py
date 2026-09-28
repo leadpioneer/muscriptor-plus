@@ -86,3 +86,15 @@ class InvalidOverridesError(GuitarArrangementError):
     """The overrides document is malformed or contradicts the MIDI input."""
 
     code = "invalid_overrides"
+
+
+class InvalidMelodyPolicyError(GuitarArrangementError):
+    """The requested melody reduction policy is not one of off/top/bottom."""
+
+    code = "invalid_melody_policy"
+
+
+class InvalidArrangementError(GuitarArrangementError):
+    """The arrangement document is not a readable schema-v2 JSON."""
+
+    code = "invalid_arrangement"

@@ -173,9 +173,30 @@ cost models the hand, not the notes' frets: moving between frets within one
 hand position is free, a hand shift is visible in the
 `position_change_count` / `total_hand_position_travel` metrics, and an open
 string or a rest inside the phrase makes a shift cheaper. `--explain`
-prints a per-phrase summary to stderr. The JSON is an intermediate format:
-**not tablature or PDF yet**; polyphonic arrangement, ASCII tab and notation
-export are separate future stages. The API exposes a mirror endpoint
+prints a per-phrase summary to stderr.
+
+A polyphonic track (chords, double stops) fails by default. `--melody top` /
+`--melody bottom` opts into a deterministic monophonic reduction: in every
+simultaneous-onset group the highest (or lowest) note is kept, and everything
+dropped is listed in the document's `melody_reduction` block. Overlaps with
+distinct onsets (bass lines, legato) are kept as-is.
+
+From the resulting JSON:
+- `uv run muscriptor guitar-tab arrangement.json --midi song.mid` writes an
+  ASCII tab and the reverse MIDI (pitches, timings and velocities verbatim;
+  the document carries no tempo map);
+- `POST /arrange/guitar/midi` and `POST /arrange/guitar/tab` are the same
+  converters over the API;
+- feed that MIDI to the existing `/sheets` pipeline to get score + tab PDFs
+  (requires MuseScore, see below).
+
+The web UI bundles all of this in the Guitar Arranger Lab (the
+"Edit fingering" button — on the welcome screen and after a transcription):
+an SVG fretboard with legal positions and locks, phrase/note navigation,
+audition playback (nominal 120 BPM), downloads for arrangement.json /
+arrangement.mid / the tab, and score+tab PDFs via MuseScore.
+
+The API exposes a mirror endpoint
 `POST /arrange/guitar` (MIDI upload + the same parameters, structured
 `{"code", "message", "details"}` errors).
 
