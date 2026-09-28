@@ -41,11 +41,27 @@ def test_pitch_below_every_string_is_an_error():
 
 
 def test_pitch_above_the_reachable_range_is_an_error():
-    # Lowest string 40 + max_fret 24 → the top reachable pitch is 64.
+    # Highest open string 64 + max_fret 24 → the top reachable pitch is 88.
     with pytest.raises(UnplayableNoteError) as excinfo:
         possible_positions(90, STANDARD_TUNING, 24)
     assert excinfo.value.details["pitch"] == 90
-    assert excinfo.value.details["high_pitch"] == 64
+    assert excinfo.value.details["high_pitch"] == 88
+
+
+def test_playable_ceiling_reaches_beyond_the_highest_open_string():
+    # F#5 (78) sits 14 frets above the open 1st string: playable, even though
+    # it lies above every open pitch (the old error message claimed 64).
+    positions = possible_positions(78, STANDARD_TUNING, 24)
+    assert FretPosition(string=1, fret=14) in positions
+
+
+def test_error_message_reports_the_true_playable_range():
+    with pytest.raises(UnplayableNoteError) as excinfo:
+        possible_positions(37, STANDARD_TUNING, 24)
+    text = str(excinfo.value)
+    assert "40–88" in text
+    assert excinfo.value.details["low_pitch"] == 40
+    assert excinfo.value.details["high_pitch"] == 88
 
 
 def test_max_fret_limits_the_candidates():

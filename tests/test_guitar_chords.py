@@ -310,3 +310,43 @@ def test_arrangement_is_byte_stable_v3():
     first = arrange(data, filename="s.mid")
     second = arrange(data, filename="s.mid")
     assert json.dumps(first) == json.dumps(second)
+
+
+# ---------------------------------------------------------------------------
+# Out-of-range input: aggregated diagnosis, never a silent fix
+# ---------------------------------------------------------------------------
+
+
+def test_out_of_range_notes_are_reported_all_at_once():
+    from muscriptor.guitar_arrangement import UnplayableNoteError
+
+    # A bass line below the lowest string (like a transcription of a song
+    # with a real bass guitar): the error must list every offender, not
+    # fail on the first one.
+    with pytest.raises(UnplayableNoteError) as excinfo:
+        arrange(
+            melody_midi([(37, 0, 240), (39, 240, 240), (64, 480, 240)]),
+            filename="s.mid",
+        )
+    details = excinfo.value.details
+    assert details["offender_count"] == 2
+    assert details["offender_pitches"] == [37, 39]
+    assert details["low_pitch"] == 40
+    # The playable ceiling includes fretted notes above the highest open
+    # string: 64 + 24 = 88.
+    assert details["high_pitch"] == 88
+    text = str(excinfo.value)
+    assert "2 of 3" in text
+    assert "40–88" in text
+    assert "+12 semitones" in text
+
+
+def test_melody_top_policy_can_rescue_below_range_notes():
+    # The low note shares its onset with a higher one, so the explicit `top`
+    # reduction removes it before the range check — the arrangement succeeds.
+    document = arrange(
+        melody_midi([(37, 0, 480), (64, 0, 480)]),
+        filename="s.mid",
+        melody_policy="top",
+    )
+    assert [n["pitch"] for n in document["notes"]] == [64]

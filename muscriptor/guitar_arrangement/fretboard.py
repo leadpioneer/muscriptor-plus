@@ -40,9 +40,9 @@ def possible_positions(
     ]
     if not positions:
         low = tuning.low_pitch
-        high = low + max_fret
+        high = max(tuning.open_pitches) + max_fret
         raise UnplayableNoteError(
-            f"pitch {pitch} cannot be played: the tuned range is MIDI "
+            f"pitch {pitch} cannot be played: the fretboard covers MIDI "
             f"{low}–{high} (max_fret={max_fret}) and octave transposition "
             "is never applied automatically",
             pitch=pitch,

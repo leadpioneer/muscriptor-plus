@@ -7,7 +7,11 @@ Typer, so the whole flow stays testable without either.
 
 import dataclasses
 
-from .errors import InvalidMelodyPolicyError, InvalidOverridesError
+from .errors import (
+    InvalidMelodyPolicyError,
+    InvalidOverridesError,
+    UnplayableNoteError,
+)
 from .events import analyze_polyphony, group_into_events
 from .fretboard import resolve_tuning
 from .melody import reduce_to_melody
@@ -89,6 +93,13 @@ def arrange_solution(
     if melody_policy != "off":
         notes, reduction = reduce_to_melody(notes, melody_policy)
     events = group_into_events(notes)
+    # The structural too-many-notes error (7+ notes on one onset) outranks
+    # the range check: it fires first in the solver, so the pre-validation
+    # must not mask it.
+    if all(
+        len(event.notes) <= tuning.string_count for event in events
+    ):
+        _validate_fretboard_range(notes, tuning, config)
     polyphony = analyze_polyphony(events)
     event_phrases = split_event_phrases(
         events, parsed.ticks_per_beat, config.phrase_gap_beats
@@ -117,6 +128,49 @@ def arrange_solution(
         polyphony=polyphony,
         melody_reduction=reduction,
     )
+
+
+def _validate_fretboard_range(notes: tuple, tuning, config: SolverConfig) -> None:
+    """Refuse out-of-range notes once, with the full picture.
+
+    Transcriptions often carry a real bass line below the lowest string.
+    Failing on the first such note (the old behaviour) hid the scale of the
+    problem, so every offender is collected and reported in one error:
+    the count, the distinct pitches and a sample of ticks. Nothing is ever
+    transposed or dropped to make the input fit.
+    """
+    if not notes:
+        return
+    low = tuning.low_pitch
+    high = max(tuning.open_pitches) + config.max_fret
+    offenders = [n for n in notes if n.pitch < low or n.pitch > high]
+    if not offenders:
+        return
+    pitches = sorted({n.pitch for n in offenders})
+    sample = ", ".join(
+        f"pitch {n.pitch} at tick {n.onset_ticks}" for n in offenders[:5]
+    )
+    more = (
+        f" (and {len(offenders) - 5} more)" if len(offenders) > 5 else ""
+    )
+    error = UnplayableNoteError(
+        f"{len(offenders)} of {len(notes)} notes lie outside the fretboard: "
+        f"the tuned strings cover MIDI {low}–{high} "
+        f"(max_fret={config.max_fret}); offending pitches {pitches}; "
+        f"first offenders: {sample}{more}. Octave transposition is never "
+        "applied automatically — transpose the track (e.g. +12 semitones), "
+        "extract the melody (top/bottom policy), or use a tuning that "
+        "reaches these notes",
+        pitch=offenders[0].pitch,
+        low_pitch=low,
+        high_pitch=high,
+    )
+    # Extra structured context for API clients (the UI reads pitch/low/high
+    # only; extra keys are additive and ignored by older clients).
+    error.details.update(
+        {"offender_count": len(offenders), "offender_pitches": pitches}
+    )
+    raise error
 
 
 def _validate_locks(
