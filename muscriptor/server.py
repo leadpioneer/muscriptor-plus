@@ -768,6 +768,7 @@ def create_app(
         tuning: Annotated[str, Form()] = "standard",
         max_fret: Annotated[int, Form()] = 24,
         phrase_gap_beats: Annotated[float, Form()] = 1.0,
+        melody: Annotated[str, Form()] = "off",
         overrides: Annotated[str | None, Form()] = None,
     ) -> dict:
         """Arrange one monophonic MIDI track for guitar (string/fret per note).
@@ -776,12 +777,16 @@ def create_app(
         pipeline: no transcription model, no MuseScore, no audio. Returns the
         versioned arrangement JSON. Structured errors use
         `{"code", "message", "details"}`: 400 for an unreadable MIDI file or
-        malformed/contradictory overrides, 422 for an ambiguous track choice,
-        polyphonic input or an unplayable note.
+        malformed/contradictory input, 422 for an ambiguous track choice,
+        polyphonic input or an unplayable note. `melody` opts into a
+        deterministic monophonic reduction (`top` = keep the highest note of
+        every simultaneous onset group, `bottom` = the lowest) so real-world
+        polyphonic tracks can still be arranged as one melodic line.
         """
         from muscriptor.guitar_arrangement import (
             GuitarArrangementError,
             MidiParseError,
+            InvalidMelodyPolicyError,
             InvalidOverridesError,
             arrange,
         )
@@ -796,14 +801,91 @@ def create_app(
                 tuning_name=tuning,
                 max_fret=max_fret,
                 phrase_gap_beats=phrase_gap_beats,
+                melody_policy=melody,
                 overrides_text=overrides,
             )
         except GuitarArrangementError as e:
-            status = 400 if isinstance(e, (MidiParseError, InvalidOverridesError)) else 422
+            status = (
+                400
+                if isinstance(
+                    e, (MidiParseError, InvalidOverridesError, InvalidMelodyPolicyError)
+                )
+                else 422
+            )
             raise HTTPException(
                 status_code=status,
                 detail={"code": e.code, "message": str(e), "details": e.details},
             ) from e
+
+    async def _arrangement_upload(document: UploadFile, error_status: int) -> dict:
+        """Parse an uploaded arrangement.json into a dict (shared by mirrors)."""
+        import json
+
+        raw = await document.read()
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=error_status,
+                detail={
+                    "code": "invalid_arrangement",
+                    "message": f"arrangement document is not valid JSON: {e}",
+                    "details": {},
+                },
+            ) from e
+
+    @app.post("/arrange/guitar/midi")
+    async def arrangement_to_midi(
+        document: Annotated[UploadFile, File()],
+    ) -> Response:
+        """Convert an arrangement.json back into a MIDI file.
+
+        Pitch, onset, offset and velocity are copied verbatim from the
+        document — the result is exactly what the arranger did to the source
+        track (minus melody-reduction drops). No tempo is written: the
+        document has none.
+        """
+        from muscriptor.guitar_arrangement import (
+            GuitarArrangementError,
+            arrangement_json_to_midi,
+        )
+
+        document_dict = await _arrangement_upload(document, 400)
+        try:
+            midi_bytes = arrangement_json_to_midi(document_dict)
+        except GuitarArrangementError as e:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": e.code, "message": str(e), "details": e.details},
+            ) from e
+        stem = (document.filename or "arrangement.json").rsplit(".", 1)[0]
+        return Response(
+            content=midi_bytes,
+            media_type="audio/midi",
+            headers={
+                "Content-Disposition": f'attachment; filename="{stem}.mid"'
+            },
+        )
+
+    @app.post("/arrange/guitar/tab")
+    async def arrangement_to_tab(
+        document: Annotated[UploadFile, File()],
+    ) -> Response:
+        """Render an arrangement.json as ASCII tabulature (text/plain)."""
+        from muscriptor.guitar_arrangement import (
+            GuitarArrangementError,
+            arrangement_json_to_tab,
+        )
+
+        document_dict = await _arrangement_upload(document, 400)
+        try:
+            tab_text = arrangement_json_to_tab(document_dict)
+        except GuitarArrangementError as e:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": e.code, "message": str(e), "details": e.details},
+            ) from e
+        return Response(content=tab_text, media_type="text/plain; charset=utf-8")
 
     @app.post("/sheets")
     async def sheets(

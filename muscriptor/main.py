@@ -584,6 +584,15 @@ def arrange_guitar(
             "optimized phrase.",
         ),
     ] = 1.0,
+    melody: Annotated[
+        str,
+        typer.Option(
+            "--melody",
+            help="Reduce polyphonic input to one melodic line: top (highest "
+            "note of each simultaneous onset group), bottom (lowest) or off "
+            "(refuse polyphony).",
+        ),
+    ] = "off",
     overrides: Annotated[
         Path | None,
         typer.Option(
@@ -657,6 +666,7 @@ def arrange_guitar(
             tuning_name=tuning,
             max_fret=max_fret,
             phrase_gap_beats=phrase_gap_beats,
+            melody_policy=melody,
             overrides_text=overrides_text,
         )
     except GuitarArrangementError as e:
@@ -682,6 +692,68 @@ def _explain_phrases(solution) -> None:
 
     for line in explain_lines(solution):
         typer.echo(line, err=True)
+
+
+@app.command("guitar-tab")
+def guitar_tab(
+    arrangement_json: Annotated[
+        Path,
+        typer.Argument(help="An arrangement.json produced by arrange-guitar."),
+    ],
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            help="Where to write the ASCII tabulature "
+            "(default: <arrangement-stem>.tab.txt).",
+        ),
+    ] = None,
+    midi_out: Annotated[
+        Path | None,
+        typer.Option(
+            "--midi",
+            help="Also convert the document back into a MIDI file at this path.",
+        ),
+    ] = None,
+):
+    """Convert an arrangement.json into an ASCII tab (and optionally MIDI).
+
+    Pitch, onset and duration come verbatim from the document, so the MIDI is
+    exactly what the arranger did to the source track. The tab uses a fixed
+    16th-note grid and bar lines every 4 beats — the document carries no
+    tempo or meter map.
+    """
+    import json
+
+    from muscriptor.guitar_arrangement import (
+        GuitarArrangementError,
+        arrangement_json_to_midi,
+        arrangement_json_to_tab,
+    )
+
+    try:
+        document = json.loads(arrangement_json.read_text(encoding="utf-8"))
+    except OSError as e:
+        typer.echo(f"Error: cannot read {arrangement_json}: {e}", err=True)
+        raise typer.Exit(1)
+    except json.JSONDecodeError as e:
+        typer.echo(f"Error: {arrangement_json} is not valid JSON: {e}", err=True)
+        raise typer.Exit(1)
+
+    try:
+        tab_text = arrangement_json_to_tab(document)
+        if midi_out is not None:
+            midi_bytes = arrangement_json_to_midi(document)
+    except GuitarArrangementError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    destination = output or arrangement_json.with_suffix(".tab.txt")
+    destination.write_text(tab_text + "\n", encoding="utf-8")
+    if midi_out is not None:
+        midi_out.write_bytes(midi_bytes)
+        typer.echo(f"MIDI written to {midi_out}", err=True)
+    typer.echo(f"Tab written to {destination}", err=True)
 
 
 def main():
