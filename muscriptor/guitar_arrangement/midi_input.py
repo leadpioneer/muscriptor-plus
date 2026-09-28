@@ -28,7 +28,7 @@ from .errors import (
     PolyphonicInputError,
     TrackNotFoundError,
 )
-from .models import MidiNote
+from .models import MidiNote, TempoEvent, TimeSignatureEvent
 
 DRUM_CHANNEL = 9
 
@@ -63,10 +63,19 @@ class TrackInfo:
 class ParsedMidi:
     ticks_per_beat: int
     tracks: tuple[TrackInfo, ...]
+    # Global meta maps collected across all tracks (tempo/time signatures
+    # usually live in a conductor track that carries no notes). When the file
+    # has none, the standard MIDI defaults (500000 µs/beat, 4/4) are supplied
+    # at tick 0 and marked `is_default=True`.
+    tempo_events: tuple[TempoEvent, ...] = ()
+    time_signature_events: tuple[TimeSignatureEvent, ...] = ()
 
     def summaries(self) -> list[dict]:
         """All note-bearing (track, channel) pairs, in file order."""
         return [t.summary() for t in self.tracks if t.notes]
+
+
+DEFAULT_TEMPO = 500000  # µs per beat — the Standard MIDI File default.
 
 
 def parse_midi(data: bytes) -> ParsedMidi:
@@ -77,6 +86,8 @@ def parse_midi(data: bytes) -> ParsedMidi:
         raise MidiParseError(f"could not parse MIDI file: {e}") from e
 
     combos: dict[tuple[int, int], dict] = {}
+    tempo_events: list[TempoEvent] = []
+    time_signature_events: list[TimeSignatureEvent] = []
 
     def combo(track_index: int, channel: int) -> dict:
         return combos.setdefault(
@@ -99,6 +110,22 @@ def parse_midi(data: bytes) -> ParsedMidi:
             if isinstance(msg, MetaMessage):
                 if msg.type == "track_name" and name is None:
                     name = msg.name
+                elif msg.type == "set_tempo":
+                    tempo_events.append(
+                        TempoEvent(tick=tick, tempo=int(msg.tempo))
+                    )
+                elif msg.type == "time_signature":
+                    time_signature_events.append(
+                        TimeSignatureEvent(
+                            tick=tick,
+                            numerator=int(msg.numerator),
+                            denominator=int(msg.denominator),
+                            clocks_per_click=int(msg.clocks_per_click),
+                            notated_32nd_notes_per_beat=int(
+                                msg.notated_32nd_notes_per_beat
+                            ),
+                        )
+                    )
                 continue
             if msg.type in ("note_on", "note_off"):
                 note_on = msg.type == "note_on" and msg.velocity > 0
@@ -151,7 +178,18 @@ def parse_midi(data: bytes) -> ParsedMidi:
         for (track_index, channel), info in sorted(combos.items())
         if info["notes"]
     )
-    return ParsedMidi(ticks_per_beat=midi.ticks_per_beat, tracks=tracks)
+    if not tempo_events:
+        tempo_events = [TempoEvent(tick=0, tempo=DEFAULT_TEMPO, is_default=True)]
+    if not time_signature_events:
+        time_signature_events = [
+            TimeSignatureEvent(tick=0, numerator=4, denominator=4, is_default=True)
+        ]
+    return ParsedMidi(
+        ticks_per_beat=midi.ticks_per_beat,
+        tracks=tracks,
+        tempo_events=tuple(tempo_events),
+        time_signature_events=tuple(time_signature_events),
+    )
 
 
 def _flush_unmatched(track_index, pending, final_tick, combo) -> None:

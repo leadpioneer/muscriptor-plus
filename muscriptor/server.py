@@ -887,6 +887,133 @@ def create_app(
             ) from e
         return Response(content=tab_text, media_type="text/plain; charset=utf-8")
 
+    @app.post("/arrange/guitar/musicxml")
+    async def arrangement_to_musicxml(
+        document: Annotated[UploadFile, File()],
+    ) -> Response:
+        """Convert an arrangement.json into fingering-preserving MusicXML.
+
+        Every note carries `<technical><string>/<fret></technical>`, so an
+        engraver renders the exact tab the arranger (or the user's locks)
+        chose — unlike MIDI, which never stores string/fret.
+        """
+        from muscriptor.guitar_arrangement import (
+            GuitarArrangementError,
+            arrangement_json_to_musicxml,
+        )
+
+        document_dict = await _arrangement_upload(document, 400)
+        try:
+            xml_bytes = arrangement_json_to_musicxml(document_dict)
+        except GuitarArrangementError as e:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": e.code, "message": str(e), "details": e.details},
+            ) from e
+        stem = (document.filename or "arrangement.json").rsplit(".", 1)[0]
+        return Response(
+            content=xml_bytes,
+            media_type="application/vnd.recordare.musicxml+xml",
+            headers={
+                "Content-Disposition": f'attachment; filename="{stem}.musicxml"'
+            },
+        )
+
+    @app.post("/arrange/guitar/pdf")
+    async def arrangement_to_pdf(
+        document: Annotated[UploadFile, File()],
+    ) -> Response:
+        """Engrave an arrangement.json into a score+tab PDF that provably
+        keeps the chosen string/fret.
+
+        Pipeline: arrangement → MusicXML (with `<technical>` string/fret) →
+        MuseScore 4 → PDF. The MusicXML round trip is covered by a test that
+        verifies MuseScore preserves the technical positions, so the PDF
+        matches the arrangement JSON. Returns a zip with the PDF and the
+        intermediate MusicXML. 503 when MuseScore is not installed.
+        """
+        import subprocess
+        import tempfile
+        import zipfile
+        from pathlib import Path
+
+        from muscriptor.guitar_arrangement import (
+            GuitarArrangementError,
+            arrangement_json_to_musicxml,
+        )
+        from muscriptor.utils.sheets import (
+            MuseScoreError,
+            MuseScoreNotFoundError,
+            find_musescore,
+        )
+
+        document_dict = await _arrangement_upload(document, 400)
+        try:
+            xml_bytes = arrangement_json_to_musicxml(document_dict)
+        except GuitarArrangementError as e:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": e.code, "message": str(e), "details": e.details},
+            ) from e
+
+        stem = (document.filename or "arrangement.json").rsplit(".", 1)[0]
+        try:
+            binary = find_musescore()
+        except MuseScoreNotFoundError as e:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "musescore_unavailable",
+                    "message": str(e),
+                    "details": {},
+                },
+            ) from e
+        try:
+            with tempfile.TemporaryDirectory(prefix="guitar_pdf_") as tmp_dir:
+                tmp_path = Path(tmp_dir)
+                xml_path = tmp_path / f"{stem}.musicxml"
+                xml_path.write_bytes(xml_bytes)
+                pdf_path = tmp_path / f"{stem}.pdf"
+                proc = subprocess.run(
+                    [binary, "-o", str(pdf_path), str(xml_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+                if not pdf_path.is_file() or pdf_path.stat().st_size == 0:
+                    raise HTTPException(
+                        status_code=500,
+                        detail={
+                            "code": "fingering_export_failed",
+                            "message": (
+                                "MuseScore ran but produced no PDF for this "
+                                "arrangement"
+                            ),
+                            "details": {"stderr": (proc.stderr or "")[-2000:]},
+                        },
+                    )
+                buffer = io.BytesIO()
+                with zipfile.ZipFile(buffer, "w") as archive:
+                    archive.write(pdf_path, "full_score.pdf")
+                    archive.write(xml_path, f"{stem}.musicxml")
+                zip_bytes = buffer.getvalue()
+        except (MuseScoreError, subprocess.TimeoutExpired, OSError) as e:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "fingering_export_failed",
+                    "message": f"could not engrave the arrangement: {e}",
+                    "details": {},
+                },
+            ) from e
+        return Response(
+            content=zip_bytes,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{stem}_score.zip"'
+            },
+        )
+
     @app.post("/sheets")
     async def sheets(
         midi: Annotated[UploadFile, File()],

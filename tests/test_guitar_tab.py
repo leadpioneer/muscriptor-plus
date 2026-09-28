@@ -38,6 +38,32 @@ def test_output_is_deterministic():
     assert arrangement_json_to_tab(BASE) == arrangement_json_to_tab(BASE)
 
 
+def test_e_major_renders_as_a_vertical_chord():
+    """Golden test: all six notes of one onset share one time column."""
+    from muscriptor.guitar_arrangement import arrange
+    from .midi_build import melody_midi
+
+    document = arrange(
+        melody_midi([(p, 0, 1920) for p in (40, 47, 52, 56, 59, 64)]),
+        filename="emajor.mid",
+    )
+    tab = arrangement_json_to_tab(document)
+    lines = tab.splitlines()
+    assert len(lines) == 6
+    # String 6 (bottom line) fret 0, string 5 fret 2, string 4 fret 2,
+    # string 3 fret 1, strings 2 and 1 fret 0 — one vertical stack.
+    expected = {6: "0", 5: "2", 4: "2", 3: "1", 2: "0", 1: "0"}
+    for number, fret in expected.items():
+        line = lines[number - 1]
+        # The fret label sits in the first grid column (right after the bar).
+        cell = line.split("|")[1]
+        assert fret in cell, f"string {number}: {cell!r}"
+    # The chord occupies a single column: no other fret label anywhere.
+    for number, fret in expected.items():
+        body = lines[number - 1].split("|", 1)[1]
+        assert body.count(fret) >= 1
+
+
 def test_tenth_fret_occupies_two_characters():
     tab = arrangement_json_to_tab(BASE)
     assert "-10" in tab  # two-digit fret inside the fixed-width cell

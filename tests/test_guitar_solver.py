@@ -7,6 +7,8 @@ programming itself rather than the fretboard generator. The v1 solver's
 transition cost survives only as a test reference (`v1_reference.py`).
 """
 
+import json
+
 import pytest
 
 from muscriptor.guitar_arrangement import (
@@ -357,4 +359,42 @@ def test_thousands_of_notes_are_handled_quickly_enough():
     result = arrange(melody_midi(melody), filename="song.mid")
     assert result["metrics"]["note_count"] == 5000
     assert result["metrics"]["phrase_count"] == 1
+
+
+def test_two_thousand_events_with_chords_stay_bounded():
+    """Benchmark-like v3 test: 2000 singleton events with periodic dyads,
+    triads and a few six-note chords. Asserts completion, deterministic
+    output and bounded candidate counts — no wall-clock thresholds."""
+    notes = []
+    tick = 0
+    ordinal = 0
+    for i in range(2000):
+        kind = i % 40
+        if kind == 0:
+            pitches = (40, 47, 52, 56, 59, 64)  # six-note chord
+        elif kind == 7:
+            pitches = (60, 64, 67)  # triad
+        elif kind == 13:
+            pitches = (64, 67)  # dyad
+        else:
+            pitches = (60 + (i % 12),)
+        for pitch in pitches:
+            ordinal += 1
+            notes.append((pitch, tick, 200))
+        tick += 240
+    data = melody_midi(notes)
+    first = arrange(data, filename="song.mid")
+    second = arrange(data, filename="song.mid")
+    assert first["metrics"]["note_count"] == sum(
+        len({(p, t) for p, t, _ in notes if t == ev})
+        for ev in range(0, 2000 * 240, 240)
+    ) or first["metrics"]["note_count"] > 2000
+    assert json.dumps(first) == json.dumps(second)
+    # Candidates never explode: per event bounded by the cap.
+    for event in first["events"]:
+        assert event["generated_candidates"] <= 5000
+        assert (
+            len(event["note_ids"])
+            <= 6
+        )
 

@@ -42,7 +42,7 @@ def test_successful_arrangement_writes_the_json(tmp_path):
     )
     assert result.exit_code == 0
     document = json.loads(output.read_text(encoding="utf-8"))
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == 3
     assert document["source"]["filename"] == "song.mid"
     assert document["metrics"]["note_count"] == 2
     for note in document["notes"]:
@@ -124,10 +124,12 @@ def test_overrides_file_pins_a_position(tmp_path):
 def test_melody_flag_reduces_polyphonic_input(tmp_path):
     path = _write_midi(tmp_path, [(60, 0, 240), (67, 0, 240), (72, 240, 240)])
     output = tmp_path / "arrangement.json"
-    # Default: refused.
-    result = runner.invoke(app, ["arrange-guitar", str(path)])
-    assert result.exit_code == 1
-    assert "simultaneous note onsets" in result.output
+    # Default: every note is kept (v3 chord solver).
+    result = runner.invoke(app, ["arrange-guitar", str(path), "--output", str(output)])
+    assert result.exit_code == 0
+    document = json.loads(output.read_text(encoding="utf-8"))
+    assert document["metrics"]["note_count"] == 3
+    assert document["polyphony_analysis"]["polyphonic_event_count"] == 1
     # --melody top: the dyad collapses to the highest note.
     result = runner.invoke(
         app, ["arrange-guitar", str(path), "--melody", "top", "--output", str(output)]

@@ -8,13 +8,14 @@ Typer, so the whole flow stays testable without either.
 import dataclasses
 
 from .errors import InvalidMelodyPolicyError, InvalidOverridesError
+from .events import analyze_polyphony, group_into_events
 from .fretboard import resolve_tuning
 from .melody import reduce_to_melody
-from .midi_input import check_monophonic, parse_midi, select_notes
+from .midi_input import parse_midi, select_notes
 from .models import ArrangementSolution, FretPosition, SolverConfig, SourceInfo
-from .phrases import split_phrases
+from .phrases import split_event_phrases
 from .serialization import parse_overrides, solution_to_dict
-from .solver import solve_phrases
+from .solver import solve_event_phrases
 
 
 def arrange(
@@ -60,12 +61,16 @@ def arrange_solution(
     overrides_text: str | None = None,
     config: SolverConfig | None = None,
 ) -> ArrangementSolution:
-    """Parse, select, reduce, phrase, lock and solve.
+    """Parse, select, reduce, group, phrase, lock and solve.
 
-    Returns the full solution object (the CLI needs phrase internals for
-    `--explain`); serialization happens on top. Raises a
-    `GuitarArrangementError` subclass for every unsupported or contradictory
-    input — nothing is ever handled by a silent fallback.
+    Since v3 the solver works on onset events (1–6 simultaneous notes); the
+    default melody policy `off` keeps every note and no longer rejects
+    polyphonic onsets — that is the whole point of the chord solver. `top`/
+    `bottom` remain explicit monophonic reductions. Returns the full solution
+    object (the CLI needs phrase internals for `--explain`); serialization
+    happens on top. Raises a `GuitarArrangementError` subclass for every
+    unsupported or contradictory input — nothing is ever handled by a silent
+    fallback.
     """
     if melody_policy not in ("off", "top", "bottom"):
         raise InvalidMelodyPolicyError(
@@ -83,9 +88,10 @@ def arrange_solution(
     notes = selected.notes
     if melody_policy != "off":
         notes, reduction = reduce_to_melody(notes, melody_policy)
-    check_monophonic(notes)
-    phrases = split_phrases(
-        notes, parsed.ticks_per_beat, config.phrase_gap_beats
+    events = group_into_events(notes)
+    polyphony = analyze_polyphony(events)
+    event_phrases = split_event_phrases(
+        events, parsed.ticks_per_beat, config.phrase_gap_beats
     )
     locked = (
         _validate_locks(notes, overrides_text, tuning, config)
@@ -100,12 +106,15 @@ def arrange_solution(
             track_name=selected.name,
             channel=selected.channel,
             program=selected.program,
+            tempo_events=parsed.tempo_events,
+            time_signature_events=parsed.time_signature_events,
         ),
         tuning=tuning,
         config=config,
-        phrases=solve_phrases(
-            phrases, tuning, config, parsed.ticks_per_beat, locked
+        phrases=solve_event_phrases(
+            event_phrases, tuning, config, parsed.ticks_per_beat, locked
         ),
+        polyphony=polyphony,
         melody_reduction=reduction,
     )
 

@@ -11,15 +11,22 @@ The package is pure Python: no filesystem access, no FastAPI, no torch.
 
 from .errors import (
     AmbiguousTrackError,
+    FingeringExportError,
     GuitarArrangementError,
+    IncompatibleChordLocksError,
     InvalidArrangementError,
     InvalidMelodyPolicyError,
     InvalidOverridesError,
     MidiParseError,
     PolyphonicInputError,
+    TooManyChordNotesError,
     TrackNotFoundError,
+    UnplayableChordError,
     UnplayableNoteError,
+    UnsupportedArrangementError,
 )
+from .events import analyze_polyphony, group_into_events
+from .chords import generate_chord_shapes
 from .fretboard import (
     STANDARD_TUNING,
     possible_fingerings,
@@ -37,23 +44,40 @@ from .midi_input import (
 )
 from .models import (
     ArrangementSolution,
+    AssignedEvent,
     AssignedNote,
+    BarreState,
+    ChordFingeringState,
+    ChordNoteState,
     FingeringState,
     FretPosition,
     GuitarTuning,
     MelodyReduction,
     MidiNote,
+    NoteEvent,
     Phrase,
     PhraseSolution,
+    PolyphonyAnalysis,
     SolverConfig,
     SourceInfo,
+    TempoEvent,
+    TimeSignatureEvent,
 )
 from .tab import arrangement_json_to_tab
 from .to_midi import arrangement_json_to_midi
-from .phrases import split_phrases
+from .musicxml import arrangement_json_to_musicxml
+from .phrases import split_event_phrases, split_phrases
 from .pipeline import arrange, arrange_solution
 from .serialization import OVERRIDES_VERSION, SCHEMA_VERSION, parse_overrides, to_json
-from .solver import explain_lines, solve_phrase, solve_phrases
+from .solver import (
+    chord_transition_cost,
+    explain_chord_lines,
+    explain_lines,
+    solve_event_phrase,
+    solve_event_phrases,
+    solve_phrase,
+    solve_phrases,
+)
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -62,32 +86,51 @@ __all__ = [
     "STANDARD_TUNING",
     "AmbiguousTrackError",
     "ArrangementSolution",
+    "AssignedEvent",
     "AssignedNote",
+    "BarreState",
+    "ChordFingeringState",
+    "ChordNoteState",
+    "FingeringExportError",
     "FingeringState",
     "FretPosition",
     "GuitarArrangementError",
     "GuitarTuning",
+    "IncompatibleChordLocksError",
     "InvalidMelodyPolicyError",
     "InvalidOverridesError",
     "MELODY_POLICIES",
     "MelodyReduction",
     "MidiNote",
     "MidiParseError",
+    "NoteEvent",
     "ParsedMidi",
     "Phrase",
     "PhraseSolution",
     "PolyphonicInputError",
+    "PolyphonyAnalysis",
     "SolverConfig",
     "SourceInfo",
+    "TempoEvent",
+    "TimeSignatureEvent",
+    "TooManyChordNotesError",
     "TrackInfo",
     "TrackNotFoundError",
+    "UnplayableChordError",
     "UnplayableNoteError",
+    "UnsupportedArrangementError",
+    "analyze_polyphony",
     "arrange",
     "arrange_solution",
     "arrangement_json_to_midi",
+    "arrangement_json_to_musicxml",
     "arrangement_json_to_tab",
     "check_monophonic",
+    "chord_transition_cost",
+    "explain_chord_lines",
     "explain_lines",
+    "generate_chord_shapes",
+    "group_into_events",
     "parse_midi",
     "parse_overrides",
     "possible_fingerings",
@@ -95,8 +138,11 @@ __all__ = [
     "reduce_to_melody",
     "resolve_tuning",
     "select_notes",
+    "solve_event_phrase",
+    "solve_event_phrases",
     "solve_phrase",
     "solve_phrases",
+    "split_event_phrases",
     "split_phrases",
     "to_json",
 ]

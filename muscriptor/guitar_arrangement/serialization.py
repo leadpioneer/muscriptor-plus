@@ -1,44 +1,69 @@
-"""Versioned JSON serialization for guitar arrangements (schema v2).
+"""Versioned JSON serialization for guitar arrangements (schema v3).
 
 The dict is built in a fixed key order and `to_json` never injects timestamps
 or other dynamic values, so reruns on the same input serialize to byte-for-
 byte identical JSON. No base64 MIDI is embedded — the output references the
 source file by name only.
 
-Schema v2 adds per-note `hand_position`/`finger` (the solver state is a full
-left-hand fingering, not just a spot on the neck) and a `legal_fingerings`
-list next to the v1 `legal_positions` (which keeps only string/fret). Fret
-metrics stay for diagnostics but no longer stand in for hand movement.
+Schema v3 keeps the flat `notes` list (so locks and the existing UI stay
+simple) and adds:
+- `polyphony_analysis` — a deterministic description of the input;
+- `events` — one entry per onset tick, the v3 solver's chord unit, with the
+  chosen hand position, barres, shape cost and candidate counts;
+- `source.tempo_events` / `source.time_signature_events` — the global meta
+  maps (with `is_default` flags for synthesized fallbacks);
+- `note.event_id` linking every note to its event;
+- `note.finger` may be `null` when the finger annotation is incomplete.
+
+The arranger always emits schema v3; converters accept v2 for legacy
+monophonic documents (documented compatibility decision).
 """
 
+import dataclasses
 import json
-from dataclasses import asdict
 
 from .errors import InvalidOverridesError
-from .models import ArrangementSolution, FingeringState, FretPosition
+from .models import ArrangementSolution, FretPosition
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 OVERRIDES_VERSION = 1
 
 
-def _hand_metrics(phrases):
-    """Position changes, hand travel, largest shift, open-string count."""
-    changes = travel = largest = open_count = 0
-    for phrase in phrases:
-        states = [a.state for a in phrase.assigned]
-        for previous, following in zip(states, states[1:]):
-            shift = abs(following.hand_position - previous.hand_position)
-            if shift:
-                changes += 1
-                travel += shift
-                largest = max(largest, shift)
-            open_count += 1 if previous.is_open else 0
-        open_count += 1 if states[-1].is_open else 0
-    return changes, travel, largest, open_count
+def _event_to_dict(assigned_event, phrase_index: int) -> dict:
+    """One onset event of the v3 document."""
+    state = assigned_event.state
+    event = assigned_event.event
+    return {
+        "id": f"event:{event.index}",
+        "index": event.index,
+        "phrase": phrase_index,
+        "onset_ticks": state.onset_ticks,
+        "note_ids": [note.id for note in event.notes],
+        "hand_position": state.hand_position,
+        "barres": [
+            {
+                "finger": barre.finger,
+                "fret": barre.fret,
+                "from_string": barre.from_string,
+                "to_string": barre.to_string,
+                "note_ids": list(barre.note_ids),
+            }
+            for barre in state.barres
+        ],
+        "shape_cost": round(state.shape_cost, 6),
+        "finger_assignment_complete": state.finger_assignment_complete,
+        "generated_candidates": assigned_event.generated_candidates,
+        "pruned_candidates": assigned_event.pruned_candidates,
+        # Honest about the search: when candidates were pruned, the optimum
+        # is proven only among the retained ones.
+        "optimal_within": "retained_candidates"
+        if assigned_event.pruned_candidates
+        else "all_candidates",
+    }
 
 
 def solution_to_dict(solution: ArrangementSolution) -> dict:
-    """The arrangement JSON document (schema_version 2)."""
+    """The arrangement JSON document (schema_version 3)."""
     transitions_fret = [
         abs(b.state.position.fret - a.state.position.fret)
         for p in solution.phrases
@@ -49,23 +74,72 @@ def solution_to_dict(solution: ArrangementSolution) -> dict:
         for p in solution.phrases
         for a, b in zip(p.assigned, p.assigned[1:])
     ]
-    position_changes, hand_travel, largest_shift, open_count = _hand_metrics(
-        solution.phrases
-    )
-    finger_usage: dict[str, int] = {"0": 0, "1": 0, "2": 0, "3": 0, "4": 0}
+    position_changes = hand_travel = largest_shift = open_count = 0
+    finger_usage: dict[str, int] = {
+        "0": 0,
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "unknown": 0,
+    }
+    locked_notes = 0
+    generated_total = 0
+    pruned_total = 0
     for phrase in solution.phrases:
+        states = [a.state for a in phrase.assigned]
+        for previous, following in zip(states, states[1:]):
+            shift = abs(following.hand_position - previous.hand_position)
+            if shift:
+                position_changes += 1
+                hand_travel += shift
+                largest_shift = max(largest_shift, shift)
+            open_count += 1 if previous.is_open else 0
+        if states:
+            open_count += 1 if states[-1].is_open else 0
+        for assigned_event in phrase.events:
+            generated_total += assigned_event.generated_candidates
+            pruned_total += assigned_event.pruned_candidates
+            if not assigned_event.state.finger_assignment_complete:
+                finger_usage["unknown"] += 1
         for assigned in phrase.assigned:
-            finger_usage[str(assigned.state.finger)] += 1
-    locked_notes = sum(
-        1 for p in solution.phrases for a in p.assigned if a.locked
-    )
+            if assigned.locked:
+                locked_notes += 1
+            finger = assigned.state.finger
+            if finger is None:
+                finger_usage["unknown"] += 1
+            else:
+                finger_usage[str(finger)] += 1
 
-    def state_to_dict(state: FingeringState) -> dict:
+    def state_to_dict(state) -> dict:
         return {
             "string": state.position.string,
             "fret": state.position.fret,
             "hand_position": state.hand_position,
             "finger": state.finger,
+        }
+
+    def note_row(assigned, phrase_index: int, event_id: str) -> dict:
+        return {
+            "id": assigned.note.id,
+            "event_id": event_id,
+            "phrase": phrase_index,
+            "pitch": assigned.note.pitch,
+            "onset_ticks": assigned.note.onset_ticks,
+            "offset_ticks": assigned.note.offset_ticks,
+            "velocity": assigned.note.velocity,
+            "string": assigned.state.position.string,
+            "fret": assigned.state.position.fret,
+            "hand_position": assigned.state.hand_position,
+            "finger": assigned.state.finger,
+            "locked": assigned.locked,
+            "legal_positions": [
+                {"string": pos.string, "fret": pos.fret}
+                for pos in assigned.legal_positions
+            ],
+            "legal_fingerings": [
+                state_to_dict(state) for state in assigned.legal_fingerings
+            ],
         }
 
     return {
@@ -77,6 +151,25 @@ def solution_to_dict(solution: ArrangementSolution) -> dict:
             "track_name": solution.source.track_name,
             "channel": solution.source.channel,
             "program": solution.source.program,
+            "tempo_events": [
+                {
+                    "tick": event.tick,
+                    "tempo": event.tempo,
+                    "is_default": event.is_default,
+                }
+                for event in solution.source.tempo_events
+            ],
+            "time_signature_events": [
+                {
+                    "tick": event.tick,
+                    "numerator": event.numerator,
+                    "denominator": event.denominator,
+                    "clocks_per_click": event.clocks_per_click,
+                    "notated_32nd_notes_per_beat": event.notated_32nd_notes_per_beat,
+                    "is_default": event.is_default,
+                }
+                for event in solution.source.time_signature_events
+            ],
         },
         "instrument": {
             "name": f"{solution.tuning.name}_guitar",
@@ -85,6 +178,7 @@ def solution_to_dict(solution: ArrangementSolution) -> dict:
             "max_fret": solution.config.max_fret,
             "max_hand_position": solution.config.hand_position_limit,
         },
+        "polyphony_analysis": solution.polyphony.to_dict(),
         # What the melody reduction removed, when the caller chose a policy:
         # kept notes are untouched, this lists exactly what was dropped.
         "melody_reduction": (
@@ -92,51 +186,54 @@ def solution_to_dict(solution: ArrangementSolution) -> dict:
             if solution.melody_reduction is not None
             else {"policy": "off", "dropped_note_count": 0, "dropped": []}
         ),
-        "config": {**asdict(solution.config)},
+        "config": {**dataclasses.asdict(solution.config)},
         "phrases": [
             {
                 "index": p.index,
                 "start_tick": p.start_tick,
                 "end_tick": p.end_tick,
-                "cost": p.cost,
+                "cost": round(p.cost, 6),
+                "event_count": len(p.events),
                 "fret_travel": p.fret_travel,
                 "string_travel": p.string_travel,
             }
             for p in solution.phrases
         ],
+        "events": [
+            _event_to_dict(assigned_event, p.index)
+            for p in solution.phrases
+            for assigned_event in p.events
+        ],
         "notes": [
-            {
-                "id": a.note.id,
-                "phrase": p.index,
-                "pitch": a.note.pitch,
-                "onset_ticks": a.note.onset_ticks,
-                "offset_ticks": a.note.offset_ticks,
-                "velocity": a.note.velocity,
-                "string": a.state.position.string,
-                "fret": a.state.position.fret,
-                "hand_position": a.state.hand_position,
-                "finger": a.state.finger,
-                "locked": a.locked,
-                "legal_positions": [
-                    {"string": pos.string, "fret": pos.fret}
-                    for pos in a.legal_positions
-                ],
-                "legal_fingerings": [
-                    state_to_dict(state) for state in a.legal_fingerings
-                ],
-            }
+            note_row(
+                a,
+                p.index,
+                next(
+                    f"event:{e.event.index}"
+                    for e in p.events
+                    if a.note in e.event.notes
+                ),
+            )
             for p in solution.phrases
             for a in p.assigned
         ],
         "metrics": {
             "note_count": sum(len(p.assigned) for p in solution.phrases),
             "phrase_count": len(solution.phrases),
-            "total_cost": sum(p.cost for p in solution.phrases),
+            "event_count": sum(len(p.events) for p in solution.phrases),
+            "total_cost": round(
+                sum(p.cost for p in solution.phrases), 6
+            ),
             "position_change_count": position_changes,
             "total_hand_position_travel": hand_travel,
             "largest_hand_position_shift": largest_shift,
             "open_string_count": open_count,
             "finger_usage": finger_usage,
+            # Candidate accounting: when pruned > 0, the optimum is proven
+            # among the retained candidates only (never silently claimed
+            # over discarded states).
+            "generated_candidates": generated_total,
+            "pruned_candidates": pruned_total,
             # Fret/string movement is a diagnostic: it is NOT hand movement.
             "total_fret_travel": sum(p.fret_travel for p in solution.phrases),
             "total_string_travel": sum(p.string_travel for p in solution.phrases),

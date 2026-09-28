@@ -687,10 +687,10 @@ def arrange_guitar(
 
 
 def _explain_phrases(solution) -> None:
-    """--explain: per-phrase ergonomic summary on stderr."""
-    from muscriptor.guitar_arrangement import explain_lines
+    """--explain: polyphony overview plus per-phrase/event summary on stderr."""
+    from muscriptor.guitar_arrangement import explain_chord_lines
 
-    for line in explain_lines(solution):
+    for line in explain_chord_lines(solution):
         typer.echo(line, err=True)
 
 
@@ -754,6 +754,54 @@ def guitar_tab(
         midi_out.write_bytes(midi_bytes)
         typer.echo(f"MIDI written to {midi_out}", err=True)
     typer.echo(f"Tab written to {destination}", err=True)
+
+
+@app.command("guitar-musicxml")
+def guitar_musicxml(
+    arrangement_json: Annotated[
+        Path,
+        typer.Argument(help="An arrangement.json produced by arrange-guitar."),
+    ],
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            help="Where to write the MusicXML "
+            "(default: <arrangement-stem>.musicxml).",
+        ),
+    ] = None,
+):
+    """Convert an arrangement.json into fingering-preserving MusicXML.
+
+    Every note carries <technical><string>/<fret></technical>, so MuseScore
+    (or any engraver) renders the exact tab the arranger chose — user locks
+    included. This, not the MIDI export, is the path to a faithful PDF.
+    """
+    import json
+
+    from muscriptor.guitar_arrangement import (
+        GuitarArrangementError,
+        arrangement_json_to_musicxml,
+    )
+
+    try:
+        document = json.loads(arrangement_json.read_text(encoding="utf-8"))
+    except OSError as e:
+        typer.echo(f"Error: cannot read {arrangement_json}: {e}", err=True)
+        raise typer.Exit(1)
+    except json.JSONDecodeError as e:
+        typer.echo(f"Error: {arrangement_json} is not valid JSON: {e}", err=True)
+        raise typer.Exit(1)
+
+    try:
+        xml_bytes = arrangement_json_to_musicxml(document)
+    except GuitarArrangementError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    destination = output or arrangement_json.with_suffix(".musicxml")
+    destination.write_bytes(xml_bytes)
+    typer.echo(f"MusicXML written to {destination}", err=True)
 
 
 def main():

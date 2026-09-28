@@ -27,13 +27,13 @@ def _fret_label(fret: int) -> str:
 
 
 def arrangement_json_to_tab(document) -> str:
-    """Render a schema-v2 arrangement document as an ASCII tab text block."""
+    """Render a schema-v2/v3 arrangement document as an ASCII tab text block."""
     if not isinstance(document, dict):
         raise InvalidArrangementError("arrangement document must be a JSON object")
-    if document.get("schema_version") != 2:
+    if document.get("schema_version") not in (2, 3):
         raise InvalidArrangementError(
             f"unsupported arrangement schema_version "
-            f"{document.get('schema_version')!r}, expected 2"
+            f"{document.get('schema_version')!r}, expected 2 or 3"
         )
     source = document.get("source") or {}
     instrument = document.get("instrument") or {}

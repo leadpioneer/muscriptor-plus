@@ -32,7 +32,7 @@ def test_upload_returns_the_arrangement_document():
     resp = _post(_client())
     assert resp.status_code == 200
     document = resp.json()
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == 3
     assert document["source"]["filename"] == "song.mid"
     assert document["source"]["ticks_per_beat"] == 480
     assert document["instrument"]["name"] == "standard_guitar"
@@ -69,13 +69,24 @@ def test_ambiguous_tracks_give_422_with_candidates():
     assert resp.json()["source"]["track_index"] == 1
 
 
-def test_polyphonic_input_gives_422():
+def test_polyphonic_onset_is_arranged_by_default():
+    """Since v3 a dyad is normal input: both notes survive on distinct strings."""
     data = melody_midi([(64, 0, 240), (67, 0, 240)])
     resp = _post(_client(), data=data)
-    assert resp.status_code == 422
-    detail = resp.json()["detail"]
-    assert detail["code"] == "polyphonic_input"
-    assert detail["details"]["pitches"] == [64, 67]
+    assert resp.status_code == 200
+    document = resp.json()
+    assert document["metrics"]["note_count"] == 2
+    assert len({note["string"] for note in document["notes"]}) == 2
+    analysis = document["polyphony_analysis"]
+    assert analysis["onset_event_count"] == 1
+    assert analysis["polyphonic_event_count"] == 1
+    assert analysis["largest_onset_group"] == 2
+    assert analysis["strictly_monophonic"] is False
+    # The event structure links both notes to one event id.
+    assert len({note["event_id"] for note in document["notes"]}) == 1
+    assert document["events"][0]["note_ids"] == [
+        note["id"] for note in document["notes"]
+    ]
 
 
 def test_invalid_overrides_give_400():
@@ -115,6 +126,68 @@ def test_unknown_tuning_gives_400():
     assert resp.json()["detail"]["code"] == "invalid_overrides"
 
 
+def test_arrangement_to_musicxml_endpoint_returns_fingering_preserving_xml():
+    import xml.etree.ElementTree as ET
+
+    data = melody_midi([(p, 0, 480) for p in (60, 64, 67)])
+    arrange_resp = _post(_client(), data=data)
+    document = arrange_resp.json()
+    resp = _client().post(
+        "/arrange/guitar/musicxml",
+        files={"document": ("arrangement.json", json.dumps(document).encode(), "application/json")},
+    )
+    assert resp.status_code == 200
+    assert "musicxml" in resp.headers["content-type"]
+    root = ET.fromstring(resp.content)
+    assert root.tag == "score-partwise"
+    assert len(list(root.iter("technical"))) == 3
+
+
+def test_arrangement_to_pdf_endpoint_engraves_via_musescore():
+    import zipfile
+    import io
+
+    data = melody_midi([(p, 0, 480) for p in (60, 64, 67)])
+    document = _post(_client(), data=data).json()
+    resp = _client().post(
+        "/arrange/guitar/pdf",
+        files={"document": ("arrangement.json", json.dumps(document).encode(), "application/json")},
+    )
+    assert resp.status_code == 200
+    archive = zipfile.ZipFile(io.BytesIO(resp.content))
+    names = archive.namelist()
+    assert "full_score.pdf" in names
+    pdf = archive.read("full_score.pdf")
+    assert pdf[:5] == b"%PDF-" and len(pdf) > 1000
+
+
+def test_arrangement_to_pdf_endpoint_503_without_musescore(monkeypatch):
+    from muscriptor.utils import sheets
+
+    def _raise():
+        raise sheets.MuseScoreNotFoundError("MuseScore was not found")
+
+    monkeypatch.setattr(sheets, "find_musescore", _raise)
+    data = melody_midi([(60, 0, 480)])
+    document = _post(_client(), data=data).json()
+    resp = _client().post(
+        "/arrange/guitar/pdf",
+        files={"document": ("arrangement.json", json.dumps(document).encode(), "application/json")},
+    )
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert detail["code"] == "musescore_unavailable"
+
+
+def test_arrangement_to_pdf_endpoint_gives_400_for_a_broken_document():
+    resp = _client().post(
+        "/arrange/guitar/pdf",
+        files={"document": ("arrangement.json", b"{\"schema_version\": 9}", "application/json")},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "unsupported_arrangement_schema"
+
+
 def test_result_is_serialization_stable():
     first = _post(_client()).content
     second = _post(_client()).content
@@ -122,10 +195,11 @@ def test_result_is_serialization_stable():
 
 
 def test_melody_reduction_via_melody_form_field():
-    # Two simultaneous onsets: refused by default, reduced on request.
+    # Two simultaneous onsets: kept by default, reduced only on request.
     data = melody_midi([(60, 0, 240), (67, 0, 240), (72, 240, 240)])
-    resp = _post(_client(), data=data)
-    assert resp.status_code == 422
+    default = _post(_client(), data=data)
+    assert default.status_code == 200
+    assert default.json()["metrics"]["note_count"] == 3
     resp = _post(_client(), data=data, melody="top")
     assert resp.status_code == 200
     document = resp.json()

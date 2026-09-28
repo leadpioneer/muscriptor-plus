@@ -51,6 +51,10 @@ class PolyphonicInputError(GuitarArrangementError):
     Version 1 arranges a single melodic line; simultaneous onsets are refused
     instead of silently picking (e.g.) the top note. Overlapping durations
     with distinct onsets are fine and do not trigger this.
+
+    Since v3 the chord solver handles 1–6 simultaneous onsets, so this error
+    is only raised by the explicit `check_monophonic` helper (kept for the
+    legacy monophonic path and its tests) — never by the default pipeline.
     """
 
     code = "polyphonic_input"
@@ -95,6 +99,92 @@ class InvalidMelodyPolicyError(GuitarArrangementError):
 
 
 class InvalidArrangementError(GuitarArrangementError):
-    """The arrangement document is not a readable schema-v2 JSON."""
+    """The arrangement document is not a readable schema-v2/v3 JSON."""
 
     code = "invalid_arrangement"
+
+
+class TooManyChordNotesError(GuitarArrangementError):
+    """An onset event starts more notes than the instrument has strings.
+
+    Nothing is dropped: the error lists the event so the caller can reduce it
+    explicitly (melody top/bottom) or fix the input.
+    """
+
+    code = "too_many_chord_notes"
+
+    def __init__(
+        self,
+        message: str,
+        onset_ticks: int,
+        note_ids: list[str],
+        pitches: list[int],
+        available_strings: int,
+    ) -> None:
+        super().__init__(message)
+        self.details = {
+            "onset_ticks": onset_ticks,
+            "note_ids": note_ids,
+            "pitches": pitches,
+            "available_strings": available_strings,
+        }
+
+
+class UnplayableChordError(GuitarArrangementError):
+    """No string assignment can sound every note of one onset event.
+
+    Every note is individually playable, but not on distinct strings at the
+    same time (e.g. two identical pitches with only one possible position).
+    """
+
+    code = "unplayable_chord"
+
+    def __init__(
+        self,
+        message: str,
+        onset_ticks: int,
+        note_ids: list[str],
+        pitches: list[int],
+        available_strings: int,
+        reason: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.details = {
+            "onset_ticks": onset_ticks,
+            "note_ids": note_ids,
+            "pitches": pitches,
+            "available_strings": available_strings,
+            "reason": reason,
+        }
+
+
+class IncompatibleChordLocksError(GuitarArrangementError):
+    """The locks of one chord event contradict each other.
+
+    Two locks on the same string, or locks that leave no legal completion for
+    the remaining notes of the event.
+    """
+
+    code = "incompatible_chord_locks"
+
+    def __init__(
+        self, message: str, onset_ticks: int, note_ids: list[str], strings: list[int]
+    ) -> None:
+        super().__init__(message)
+        self.details = {
+            "onset_ticks": onset_ticks,
+            "note_ids": note_ids,
+            "strings": strings,
+        }
+
+
+class UnsupportedArrangementError(GuitarArrangementError):
+    """The arrangement document's schema_version is not supported."""
+
+    code = "unsupported_arrangement_schema"
+
+
+class FingeringExportError(GuitarArrangementError):
+    """The fingering-preserving engraving failed after MuseScore ran."""
+
+    code = "fingering_export_failed"

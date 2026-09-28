@@ -148,6 +148,30 @@ class SolverConfig:
     high_position_start: int = 9
     high_position_weight: float = 0.05
 
+    # --- Chord (polyphonic onset event) weights and limits, v3 ---
+    # Max fret distance between the highest and lowest closed note of one
+    # shape; shapes needing a wider stretch are not generated at all.
+    max_chord_fret_span: int = 3
+    # Cap on retained ChordFingeringState candidates per event; pruning is
+    # deterministic (lowest shape cost, then the canonical sort key) and the
+    # generated/pruned counts are reported, so an optimum is never silently
+    # claimed over discarded states.
+    max_chord_candidates: int = 24
+    # Cost of the closed-fret span (max fret minus min fret) inside one shape.
+    chord_span_weight: float = 0.4
+    # Cost per string covered by a barre.
+    barre_weight: float = 0.3
+    # Cost per open string in a shape; 0.0 by default — an open string is
+    # never penalized as a mistake.
+    open_string_weight: float = 0.0
+    # Transition cost of the string-area change between two chord shapes,
+    # measured on the used-string centre (v2's |Δstring| only makes sense
+    # between single notes).
+    string_movement_weight: float = 0.2
+    # Shape cost added when the finger annotation could not label every
+    # closed note (small but clearly noticeable).
+    incomplete_finger_weight: float = 1.0
+
     @property
     def hand_position_limit(self) -> int:
         if self.max_hand_position is not None:
@@ -156,8 +180,41 @@ class SolverConfig:
 
 
 @dataclass(frozen=True)
+class TempoEvent:
+    """A global `set_tempo` meta event: microseconds per beat.
+
+    `is_default` marks the standard-MIDI fallback (500000 µs/beat) used when
+    the file carries no tempo at all — consumers can tell source data from a
+    synthesized default.
+    """
+
+    tick: int
+    tempo: int
+    is_default: bool = False
+
+
+@dataclass(frozen=True)
+class TimeSignatureEvent:
+    """A global `time_signature` meta event."""
+
+    tick: int
+    numerator: int
+    denominator: int
+    clocks_per_click: int = 24
+    notated_32nd_notes_per_beat: int = 8
+    is_default: bool = False
+
+
+@dataclass(frozen=True)
 class SourceInfo:
-    """Which track/channel of which file the arrangement was built from."""
+    """Which track/channel of which file the arrangement was built from.
+
+    The tempo and time-signature maps are global MIDI meta events (usually in
+    track 0, often a conductor track that carries no notes); they are kept for
+    the schema-v3 document and the MIDI export. Missing maps fall back to the
+    standard MIDI defaults (500000 µs/beat, 4/4) marked `is_default=True` —
+    a default is never silently passed off as source data.
+    """
 
     filename: str
     ticks_per_beat: int
@@ -165,17 +222,25 @@ class SourceInfo:
     track_name: str | None
     channel: int
     program: int | None
+    tempo_events: tuple[TempoEvent, ...] = ()
+    time_signature_events: tuple[TimeSignatureEvent, ...] = ()
 
 
 @dataclass(frozen=True)
 class PhraseSolution:
-    """The solver's output for one phrase."""
+    """The solver's output for one phrase.
+
+    `assigned` keeps the flat per-note view (v2 consumers); `events` carries
+    the v3 chord structure — one AssignedEvent per onset tick, including
+    singleton events.
+    """
 
     index: int
     start_tick: int
     end_tick: int
     cost: float
     assigned: tuple[AssignedNote, ...]
+    events: "tuple[AssignedEvent, ...]" = ()
     fret_travel: int = 0
     string_travel: int = 0
 
@@ -207,6 +272,142 @@ class MelodyReduction:
 
 
 @dataclass(frozen=True)
+class NoteEvent:
+    """Every note that starts at one MIDI tick (a chord, dyad or single note).
+
+    Notes are ordered by `(pitch descending, note_id)` — one fixed rule, the
+    same order the chord solver and the JSON keep everywhere. Events carry no
+    duration of their own: each note keeps its own onset/offset, so a ringing
+    note is never trimmed to fit the next event.
+    """
+
+    index: int
+    onset_ticks: int
+    notes: tuple[MidiNote, ...]
+
+    @property
+    def note_ids(self) -> tuple[str, ...]:
+        return tuple(note.id for note in self.notes)
+
+    @property
+    def pitches(self) -> tuple[int, ...]:
+        return tuple(note.pitch for note in self.notes)
+
+    @property
+    def last_offset_ticks(self) -> int:
+        return max(note.offset_ticks for note in self.notes)
+
+
+@dataclass(frozen=True)
+class PolyphonyAnalysis:
+    """A deterministic description of how polyphonic the input is.
+
+    Reported in the schema-v3 document and the CLI's --explain output; never
+    used to remove notes. `overlapping_region_count` counts the elementary
+    intervals of the timeline (split at every onset and offset tick) where two
+    or more notes sound at once. `strictly_monophonic` is true when at most
+    one note is ever active — simultaneous onsets included.
+    """
+
+    note_count: int
+    onset_event_count: int
+    polyphonic_event_count: int
+    largest_onset_group: int
+    overlapping_region_count: int
+    max_active_notes: int
+    strictly_monophonic: bool
+
+    def to_dict(self) -> dict:
+        return {
+            "note_count": self.note_count,
+            "onset_event_count": self.onset_event_count,
+            "polyphonic_event_count": self.polyphonic_event_count,
+            "largest_onset_group": self.largest_onset_group,
+            "overlapping_region_count": self.overlapping_region_count,
+            "max_active_notes": self.max_active_notes,
+            "strictly_monophonic": self.strictly_monophonic,
+        }
+
+
+@dataclass(frozen=True)
+class ChordNoteState:
+    """One note of a chord shape: which string/fret sounds it, which finger."""
+
+    note_id: str
+    pitch: int
+    position: FretPosition
+    # None when the finger allocator could not label this note; the shape
+    # stays valid (string/fret are what matters) and the state is flagged
+    # via ChordFingeringState.finger_assignment_complete.
+    finger: int | None
+
+
+@dataclass(frozen=True)
+class BarreState:
+    """One finger lying across several strings at one fret.
+
+    Emitted only when no open string of the same event sounds between
+    `from_string` and `to_string` — a barre across a ringing open string is
+    not something the annotation may claim.
+    """
+
+    finger: int
+    fret: int
+    from_string: int
+    to_string: int
+    note_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ChordFingeringState:
+    """A complete left-hand state for one onset event (1–6 notes).
+
+    This is the DP state of the v3 solver: the whole chord is the unit, and
+    the solver picks one shape per event, never per note. `notes` keeps the
+    event's `(pitch desc, note_id)` order; `shape_cost` is the intrinsic cost
+    of the shape itself (span, barres, high position, incomplete annotation).
+    """
+
+    event_index: int
+    onset_ticks: int
+    notes: tuple[ChordNoteState, ...]
+    hand_position: int
+    barres: tuple[BarreState, ...]
+    shape_cost: float
+    finger_assignment_complete: bool = True
+
+    @property
+    def positions(self) -> tuple[FretPosition, ...]:
+        return tuple(n.position for n in self.notes)
+
+    @property
+    def closed_frets(self) -> tuple[int, ...]:
+        return tuple(n.position.fret for n in self.notes if n.position.fret > 0)
+
+    @property
+    def has_open_string(self) -> bool:
+        return any(n.position.fret == 0 for n in self.notes)
+
+    def sort_key(self) -> tuple:
+        """Canonical deterministic order of shapes at one event."""
+        return (
+            round(self.shape_cost, 6),
+            self.hand_position,
+            tuple((n.position.string, n.position.fret, n.finger or -1) for n in self.notes),
+        )
+
+
+@dataclass(frozen=True)
+class AssignedEvent:
+    """An onset event together with the solver's chosen chord shape."""
+
+    event: NoteEvent
+    state: ChordFingeringState
+    generated_candidates: int
+    pruned_candidates: int
+
+
+@dataclass(frozen=True)
 class ArrangementSolution:
     """Everything the JSON serializer needs, no more."""
 
@@ -214,6 +415,7 @@ class ArrangementSolution:
     tuning: GuitarTuning
     config: SolverConfig
     phrases: tuple[PhraseSolution, ...]
+    polyphony: PolyphonyAnalysis
     # Set when the input was reduced to one melodic line before solving
     # (melody policy `top`/`bottom`); None when no reduction ran.
     melody_reduction: MelodyReduction | None = None

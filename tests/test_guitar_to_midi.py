@@ -4,6 +4,8 @@ import pytest
 
 from muscriptor.guitar_arrangement import (
     InvalidArrangementError,
+    UnsupportedArrangementError,
+    arrange,
     arrangement_json_to_midi,
 )
 from .midi_build import melody_midi
@@ -90,10 +92,10 @@ def test_reduction_drops_are_reflected_in_the_midi():
 
 
 def test_invalid_documents_are_rejected():
-    with pytest.raises(InvalidArrangementError):
-        arrangement_json_to_midi({"schema_version": 3})
-    with pytest.raises(InvalidArrangementError):
-        arrangement_json_to_midi({"schema_version": 2})
+    with pytest.raises(UnsupportedArrangementError):
+        arrangement_json_to_midi({"schema_version": 1})
+    with pytest.raises(UnsupportedArrangementError):
+        arrangement_json_to_midi({"schema_version": 9})
     with pytest.raises(InvalidArrangementError):
         arrangement_json_to_midi("not a dict")
     bad_note = {
@@ -110,3 +112,96 @@ def test_invalid_documents_are_rejected():
     }
     with pytest.raises(InvalidArrangementError):
         arrangement_json_to_midi(bad_offset)
+
+
+# ---------------------------------------------------------------------------
+# v3: retrigger order, polyphony, tempo and meter
+# ---------------------------------------------------------------------------
+
+
+def test_retrigger_writes_note_off_before_note_on():
+    """Two same-pitch notes back to back: the release of the first must be
+    written before the onset of the second, or the retriggered note dies."""
+    document = _arrange()
+    # Mutate into a retrigger: pitch 60, offset of note 1 == onset of note 2.
+    notes = document["notes"]
+    notes[0]["pitch"] = 60
+    notes[1]["pitch"] = 60
+    notes[1]["onset_ticks"] = notes[0]["offset_ticks"]
+    _, events, _ = _parsed_notes(arrangement_json_to_midi(document))
+    at_tick = [(kind, p) for kind, t, p, _ in events if t == notes[0]["offset_ticks"]]
+    assert ("off", 60) in at_tick and ("on", 60) in at_tick
+    # note_off strictly before note_on at the same tick.
+    first_off = next(i for i, (kind, _) in enumerate(at_tick) if kind == "off")
+    first_on = next(i for i, (kind, _) in enumerate(at_tick) if kind == "on")
+    assert first_off < first_on
+
+
+def test_polyphonic_event_round_trips_all_notes():
+    from .test_guitar_chords import E_MAJOR
+
+    document = arrange(melody_midi([(p, 0, 1920) for p in E_MAJOR]), filename="s.mid")
+    _, events, _ = _parsed_notes(arrangement_json_to_midi(document))
+    ons = sorted((p, t) for kind, t, p, _ in events if kind == "on")
+    assert ons == sorted((p, 0) for p in E_MAJOR)
+    offs = sorted((p, t) for kind, t, p, _ in events if kind == "off")
+    assert offs == sorted((p, 1920) for p in E_MAJOR)
+
+
+def test_tempo_and_time_signature_maps_are_written_back():
+    from mido import MetaMessage, MidiTrack
+
+    from .midi_build import raw_midi
+
+    conductor = [
+        MetaMessage("track_name", name="conductor", time=0),
+        MetaMessage("set_tempo", tempo=600000, time=0),
+        MetaMessage("time_signature", numerator=3, denominator=4, time=0),
+        MetaMessage("set_tempo", tempo=400000, time=960),
+    ]
+    guitar = [
+        MetaMessage("track_name", name="guitar", time=0),
+        __import__("mido").Message("note_on", note=64, velocity=100, time=0),
+        __import__("mido").Message("note_off", note=64, velocity=0, time=240),
+    ]
+    data = raw_midi([conductor, guitar])
+    document = arrange(data, filename="s.mid", track=1)
+    # The parser picked the maps from the conductor track and marked nothing
+    # as a default.
+    tempos = document["source"]["tempo_events"]
+    assert [(t["tick"], t["tempo"], t["is_default"]) for t in tempos] == [
+        (0, 600000, False),
+        (960, 400000, False),
+    ]
+    meter = document["source"]["time_signature_events"]
+    assert meter[0]["numerator"] == 3 and meter[0]["denominator"] == 4
+    assert meter[0]["is_default"] is False
+
+    _, events, _ = _parsed_notes(arrangement_json_to_midi(document))
+    midi = __import__("mido").MidiFile(
+        file=__import__("io").BytesIO(arrangement_json_to_midi(document))
+    )
+    tempos_back = [
+        (msg.tempo, sum(m.time for m in midi.tracks[0][: i + 1]))
+        for i, msg in enumerate(midi.tracks[0])
+        if isinstance(msg, MetaMessage) and msg.type == "set_tempo"
+    ]
+    assert tempos_back == [(600000, 0), (400000, 960)]
+    meters_back = [
+        (msg.numerator, msg.denominator)
+        for msg in midi.tracks[0]
+        if isinstance(msg, MetaMessage) and msg.type == "time_signature"
+    ]
+    assert meters_back == [(3, 4)]
+
+
+def test_missing_tempo_is_a_marked_default_not_invented_bpm():
+    data = melody_midi([(64, 0, 240)])
+    document = arrange(data, filename="s.mid")
+    tempos = document["source"]["tempo_events"]
+    assert len(tempos) == 1
+    assert tempos[0]["tempo"] == 500000
+    assert tempos[0]["is_default"] is True
+    meters = document["source"]["time_signature_events"]
+    assert meters[0]["numerator"] == 4 and meters[0]["denominator"] == 4
+    assert meters[0]["is_default"] is True
