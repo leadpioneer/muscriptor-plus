@@ -1,4 +1,4 @@
-# Быстрый старт / Quick start
+﻿# Быстрый старт / Quick start
 
 ## Русский
 
@@ -13,9 +13,14 @@
 ```bash
 git clone https://github.com/leadpioneer/muscriptor-plus
 cd muscriptor-plus
-uv sync          # Python-зависимости; на Windows torch ставится с CUDA (cu128)
+uv sync          # Python-зависимости; на Windows ставит PyTorch с CUDA (cu128) — для машин с NVIDIA GPU
 cd web && pnpm install && pnpm run build && cd ..
 ```
+
+На Windows-машине **без NVIDIA GPU** ставьте CPU-вариант PyTorch (без
+2,5-ГБ CUDA-загрузки): `uv sync --no-sources` — и запускайте сервер командой
+`uv run --no-sync muscriptor serve ...` (иначе uv перекатит окружение обратно
+на cu128). Мастер `install.bat` делает весь этот выбор сам.
 
 ### 3. Авторизация HuggingFace
 
@@ -29,8 +34,9 @@ uv run hf auth login
 Проще всего — два батника в корне репозитория:
 
 ```bat
-install.bat   :: мастер установки: uv, зависимости, сборка UI, HF-логин, выбор модели
-start.bat     :: запуск сервера и открытие браузера на http://127.0.0.1:8222
+install.bat   :: мастер установки: оценка железа, uv, Node, зависимости, сборка UI, доступ к весам HF, выбор модели
+install_en.bat :: тот же мастер с интерфейсом на английском
+start.bat     :: запуск сервера и открытие веб-интерфейса на http://127.0.0.1:8222
 ```
 
 `install.bat` можно перезапускать; выбранная модель сохраняется в `model.txt`
@@ -71,6 +77,12 @@ uv sync          # Python deps; on Windows torch comes from the CUDA (cu128) ind
 cd web && pnpm install && pnpm run build && cd ..
 ```
 
+On a Windows machine **without an NVIDIA GPU**, install the CPU-only PyTorch
+build instead (skips the 2.5 GB CUDA download): `uv sync --no-sources`, then
+start the server with `uv run --no-sync muscriptor serve ...` (otherwise uv
+syncs the environment back to cu128). The `install.bat` wizard makes this
+choice for you.
+
 ### 3. HuggingFace login
 
 ```bash
@@ -83,8 +95,9 @@ uv run hf auth login
 The easiest way — two batch files in the repo root:
 
 ```bat
-install.bat   :: setup wizard: uv, deps, web UI build, HF login, model choice
-start.bat     :: start the server and open http://127.0.0.1:8222
+install.bat   :: setup wizard: hardware assessment, uv, Node, deps, web UI build, HF weights access, model choice
+install_en.bat :: the same wizard with an English UI
+start.bat     :: start the server and open the web UI at http://127.0.0.1:8222
 ```
 
 `install.bat` can be re-run; the chosen model is stored in `model.txt`

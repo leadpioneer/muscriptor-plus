@@ -39,8 +39,9 @@ Prerequisites: Windows 10/11, [Git](https://git-scm.com/download/win), and a
 ```bat
 git clone https://github.com/leadpioneer/muscriptor-plus
 cd muscriptor-plus
-install.bat   :: setup wizard: uv, deps, web UI, HF login, model choice
-start.bat     :: start the server + open http://127.0.0.1:8222
+install.bat   :: setup wizard: hardware assessment, uv, Node, deps, web UI, HF weights access, model choice
+install_en.bat :: the same wizard with an English UI
+start.bat     :: start the server + open the web UI at http://127.0.0.1:8222
 ```
 
 Manual setup (any OS) is described in [QUICKSTART.md](QUICKSTART.md).
@@ -225,6 +226,10 @@ non-standard locations). Works best on music with a steady tempo.
 
 - **GPU**: PyPI's Windows torch wheel is CPU-only, so this fork pins torch to
   the `cu128` index on Windows (required for RTX 50xx). `uv sync` handles it.
+  On a machine **without an NVIDIA GPU** the `install.bat` wizard installs the
+  CPU build instead (`uv sync --no-sources`) and writes `device.txt`; then
+  `start.bat` launches the server with `uv run --no-sync` so the environment
+  is not synced back to cu128.
 - **Console encoding**: set `PYTHONUTF8=1` when redirecting output
   (`start.bat` does this) to avoid cp1251 crashes on non-ASCII debug output.
 - **MuseScore**: detected automatically; override with `MUSCRIPTOR_MUSESCORE`.
