@@ -70,7 +70,9 @@ from .phrases import split_event_phrases, split_phrases
 from .pipeline import arrange, arrange_solution
 from .serialization import OVERRIDES_VERSION, SCHEMA_VERSION, parse_overrides, to_json
 from .solver import (
+    chord_open_string_penalty,
     chord_transition_cost,
+    event_overlaps_others,
     explain_chord_lines,
     explain_lines,
     solve_event_phrase,
@@ -126,7 +128,9 @@ __all__ = [
     "arrangement_json_to_musicxml",
     "arrangement_json_to_tab",
     "check_monophonic",
+    "chord_open_string_penalty",
     "chord_transition_cost",
+    "event_overlaps_others",
     "explain_chord_lines",
     "explain_lines",
     "generate_chord_shapes",

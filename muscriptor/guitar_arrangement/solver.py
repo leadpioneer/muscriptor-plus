@@ -376,6 +376,50 @@ class _EventCell:
         return (self.cost, self.hand_travel, self.string_travel)
 
 
+def event_overlaps_others(events: tuple[NoteEvent, ...], index: int) -> bool:
+    """Whether any other note of the phrase sounds during this event's span.
+
+    An open string ringing together with something else (a chord, a sustained
+    bass line, a melody note joined later by accompaniment) is idiomatic at
+    any hand position; a completely solo open string is not.
+    """
+    event = events[index]
+    return any(
+        j != index
+        and events[j].onset_ticks < event.last_offset_ticks
+        and events[j].last_offset_ticks > event.onset_ticks
+        for j in range(len(events))
+    )
+
+
+def chord_open_string_penalty(
+    shape: ChordFingeringState,
+    overlaps_others: bool,
+    locked: bool,
+    config: SolverConfig,
+) -> float:
+    """Extra cost of an open string sounding alone far from the nut.
+
+    Open strings are idiomatic while the hand sits near the nut (at or below
+    `open_string_free_position`) or whenever anything else sounds at the same
+    time — chords, async overlaps and locked notes are always exempt. A solo
+    open-string melody note with the hand higher up reads as a register
+    mistake: the fretted in-position alternative must win. The penalty is
+    deliberately smaller than a down-and-back hand trip, so a note that can
+    only be played open (e.g. low E) never drags the hand around.
+    """
+    if overlaps_others or locked or config.open_string_far_penalty <= 0:
+        return 0.0
+    if len(shape.notes) != 1:
+        return 0.0
+    note = shape.notes[0]
+    if note.position.fret != 0:
+        return 0.0
+    if shape.hand_position <= config.open_string_free_position:
+        return 0.0
+    return config.open_string_far_penalty
+
+
 def solve_event_phrase(
     events: tuple[NoteEvent, ...],
     tuning,
@@ -412,12 +456,34 @@ def solve_event_phrase(
         gap_ticks = max(0, event.onset_ticks - previous_event.last_offset_ticks)
         gaps.append(gap_ticks / ticks_per_beat)
 
+    # Per-candidate open-string penalty: a solo open string far from the nut
+    # reads as a register mistake (see chord_open_string_penalty); chords,
+    # async overlaps and locked notes are exempt.
+    penalties: list[list[float]] = []
+    for i, shapes in enumerate(candidate_lists):
+        overlaps = event_overlaps_others(events, i)
+        penalties.append(
+            [
+                chord_open_string_penalty(
+                    shape,
+                    overlaps,
+                    len(shape.notes) == 1
+                    and shape.notes[0].note_id in locked_ids,
+                    config,
+                )
+                for shape in shapes
+            ]
+        )
+
     dp: list[list[_EventCell]] = [
         [
             _EventCell(
-                cost=shape.shape_cost, hand_travel=0, string_travel=0.0, previous=-1
+                cost=shape.shape_cost + penalty,
+                hand_travel=0,
+                string_travel=0.0,
+                previous=-1,
             )
-            for shape in candidate_lists[0]
+            for shape, penalty in zip(candidate_lists[0], penalties[0])
         ]
     ]
     for i in range(1, len(events)):
@@ -425,7 +491,7 @@ def solve_event_phrase(
         previous_cells = dp[i - 1]
         gap_beats = gaps[i]
         row: list[_EventCell] = []
-        for shape in candidate_lists[i]:
+        for shape, penalty in zip(candidate_lists[i], penalties[i]):
             best: _EventCell | None = None
             for j, previous_shape in enumerate(previous_states):
                 cell = previous_cells[j]
@@ -434,7 +500,8 @@ def solve_event_phrase(
                     + chord_transition_cost(
                         previous_shape, shape, gap_beats, config
                     )
-                    + shape.shape_cost,
+                    + shape.shape_cost
+                    + penalty,
                     hand_travel=cell.hand_travel
                     + abs(shape.hand_position - previous_shape.hand_position),
                     string_travel=cell.string_travel

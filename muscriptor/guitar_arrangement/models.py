@@ -164,6 +164,12 @@ class SolverConfig:
     # Cost per open string in a shape; 0.0 by default — an open string is
     # never penalized as a mistake.
     open_string_weight: float = 0.0
+    # Open strings are idiomatic while the hand sits near the nut: a solo
+    # (non-overlapping) open-string note with the hand above this position
+    # gets `open_string_far_penalty`. Chords, async overlaps and locked notes
+    # are always exempt.
+    open_string_free_position: int = 3
+    open_string_far_penalty: float = 4.0
     # Transition cost of the string-area change between two chord shapes,
     # measured on the used-string centre (v2's |Δstring| only makes sense
     # between single notes).

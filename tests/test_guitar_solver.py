@@ -398,3 +398,141 @@ def test_two_thousand_events_with_chords_stay_bounded():
             <= 6
         )
 
+
+# --- Open-string register penalty (solo open string far from the nut) ------
+#
+# A solo open string with the hand high up the neck reads as a register
+# mistake: the fretted in-position alternative must win. Open strings stay
+# free near the nut (hand position <= 3) and whenever anything else sounds
+# at the same time (chords, async overlaps, locked notes).
+
+
+def _event_for(pitches, onsets=None, duration=240):
+    """One NoteEvent (chord if several pitches share an onset)."""
+    from muscriptor.guitar_arrangement import group_into_events
+
+    onsets = onsets or [0] * len(pitches)
+    notes = tuple(
+        _note(i, pitch, onset, duration)
+        for i, (pitch, onset) in enumerate(zip(pitches, onsets))
+    )
+    return group_into_events(notes)[0]
+
+
+def _shapes_for(pitches):
+    from muscriptor.guitar_arrangement import generate_chord_shapes
+
+    return generate_chord_shapes(
+        _event_for(pitches), STANDARD_TUNING, SolverConfig()
+    )
+
+
+def test_penalty_hits_only_solo_open_strings_above_the_free_position():
+    from muscriptor.guitar_arrangement import chord_open_string_penalty
+
+    config = SolverConfig()
+    shapes = _shapes_for((64,))  # E4: open string 1 or fretted below
+    open_far = next(
+        s
+        for s in shapes
+        if s.notes[0].position.fret == 0 and s.hand_position == 7
+    )
+    open_near = next(
+        s
+        for s in shapes
+        if s.notes[0].position.fret == 0 and s.hand_position <= 3
+    )
+    fretted = next(s for s in shapes if s.notes[0].position.fret > 0)
+
+    assert chord_open_string_penalty(open_far, False, False, config) == (
+        config.open_string_far_penalty
+    )
+    assert chord_open_string_penalty(open_near, False, False, config) == 0.0
+    assert chord_open_string_penalty(fretted, False, False, config) == 0.0
+    # Exemptions: overlap, lock, chords, and a disabled penalty.
+    assert chord_open_string_penalty(open_far, True, False, config) == 0.0
+    assert chord_open_string_penalty(open_far, False, True, config) == 0.0
+    assert (
+        chord_open_string_penalty(
+            open_far, False, False, SolverConfig(open_string_far_penalty=0.0)
+        )
+        == 0.0
+    )
+    chord_shapes = _shapes_for((64, 74))  # includes open string 1 at hp 12–15
+    chord_with_open = next(s for s in chord_shapes if any(
+        n.position.fret == 0 for n in s.notes
+    ))
+    assert len(chord_with_open.notes) == 2
+    assert chord_open_string_penalty(chord_with_open, False, False, config) == 0.0
+
+
+def test_event_overlap_detection():
+    from muscriptor.guitar_arrangement import (
+        event_overlaps_others,
+        group_into_events,
+    )
+
+    phrase = group_into_events(
+        (
+            _note(0, 40, 0, 1440),  # bass rings under both notes
+            _note(1, 74, 240, 240),
+            _note(2, 64, 480, 240),
+        )
+    )
+    assert event_overlaps_others(phrase, 0)
+    assert event_overlaps_others(phrase, 1)
+    assert event_overlaps_others(phrase, 2)
+
+    legato = group_into_events(
+        (
+            _note(0, 64, 0, 240),
+            _note(1, 67, 240, 240),  # adjacent, not overlapping
+        )
+    )
+    assert not event_overlaps_others(legato, 0)
+    assert not event_overlaps_others(legato, 1)
+
+
+def test_solo_open_string_is_replaced_by_the_fretted_in_position_note():
+    # D5 (fret 10, string 1) — E4 (open string 1 or fret 9, string 3) — D5.
+    # The context pins the hand at position 7; the open string must lose.
+    melody = [(74, 0, 240), (64, 240, 240), (74, 480, 240)]
+    result = arrange(melody_midi(melody), filename="song.mid")
+    by_pitch = {n["pitch"]: (n["string"], n["fret"]) for n in result["notes"]}
+    assert by_pitch[74] == (1, 10)
+    assert by_pitch[64] == (3, 9), "solo open string must lose to fret 9"
+
+
+def test_overlapped_open_string_is_still_welcome():
+    # The same line, but a low E bass rings under it: the open string is
+    # idiomatic again and must win (it is cheaper than the crossing).
+    notes = [(40, 0, 1440), (74, 240, 240), (64, 480, 240), (74, 720, 240)]
+    result = arrange(melody_midi(notes), filename="song.mid")
+    by_onset = {n["onset_ticks"]: (n["string"], n["fret"]) for n in result["notes"]}
+    assert by_onset[0] == (6, 0)  # E2 exists only as the open 6th string
+    assert by_onset[480] == (1, 0), "overlapped open string must stay free"
+    assert by_onset[240] == (1, 10)
+    assert by_onset[720] == (1, 10)
+
+
+def test_forced_open_note_never_drags_the_hand_around():
+    # E2 can only be played open; the penalty is smaller than a down-and-back
+    # hand trip, so the hand stays in one place and pays the penalty once.
+    melody = [(74, 0, 240), (40, 240, 240), (74, 480, 240)]
+    result = arrange(melody_midi(melody), filename="song.mid")
+    notes = {n["pitch"]: n for n in result["notes"]}
+    assert (notes[40]["string"], notes[40]["fret"]) == (6, 0)
+    # D5: fret 10 on string 1 or fret 15 on string 2 — either way one stable
+    # position, chosen together with the open string's hand position.
+    assert (notes[74]["string"], notes[74]["fret"]) in {(1, 10), (2, 15)}
+    assert result["metrics"]["total_hand_position_travel"] == 0
+
+
+def test_chord_keeps_its_open_string_in_a_high_position():
+    # E4 + D5: the shape with the open 1st string and D5 on fret 15 sits at
+    # hand positions 12–15 — chords are exempt from the register penalty.
+    result = arrange(melody_midi([(64, 0, 480), (74, 0, 480)]), filename="song.mid")
+    by_pitch = {n["pitch"]: (n["string"], n["fret"]) for n in result["notes"]}
+    assert by_pitch[64] == (1, 0)
+    assert by_pitch[74] == (2, 15)
+
