@@ -24,10 +24,15 @@ per-instrument sheet music. The web UI is available in Russian and English.
 - **Volume controls**: master, independent original/MIDI levels, per-instrument
 - **Live model switching** from the web UI (small / medium / large) — plus
   **unloading the model from VRAM** (manual button or automatic after idle)
-- **Opt-in lead-vocal removal** before transcription (see below)
 - **Engrave any MIDI file** to sheet music from the welcome screen
+- **Guitar fingering arranger**: MIDI → strings/frets with a position solver,
+  the Guitar Arranger Lab in the web UI, and PDF/MusicXML/ASCII-tab exports
+  that keep the chosen fingering (see below)
+- **Opt-in lead-vocal removal** before transcription: original/instrumental
+  stems with a player switcher (see below)
 - **Windows fixes**: automatic MuseScore detection, GPU (cu128) PyTorch, UTF-8
-- **`install.bat` / `start.bat`** — a setup wizard and a one-click launcher
+- **`install.bat` (English copy: `install_en.bat`) / `start.bat`** — a setup
+  wizard and a one-click launcher
 
 Everything else is unchanged: model accuracy, CLI, Python API, output formats.
 
@@ -72,7 +77,7 @@ Weights are downloaded on first use and cached.
 | `large` | 1.4B | 48 | 1536 | [muscriptor-large](https://huggingface.co/MuScriptor/muscriptor-large) |
 
 `small` suits CPU-only machines, `medium` is the speed/accuracy trade-off, and
-`large` is the most accurate but needs a GPU (~12 GB VRAM of 16 GB). The model
+`large` is the most accurate but needs a GPU (~12 GB VRAM). The model
 can be switched live in the web UI header; weights are cached after download.
 
 ### GPU memory: unloading the model

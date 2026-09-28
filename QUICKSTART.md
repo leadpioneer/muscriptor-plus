@@ -5,7 +5,7 @@
 ### 1. Что понадобится
 
 - **uv** — установите по [инструкции](https://docs.astral.sh/uv/getting-started/installation/).
-- **Node + pnpm** — только для веб-интерфейса: Node можно поставить через `pnpm` ([инструкция](https://pnpm.io/installation)), pnpm включается через `corepack enable pnpm`.
+- **Node + pnpm** — только для веб-интерфейса: Node (22.19+) ставится с [nodejs.org](https://nodejs.org), pnpm включается через `corepack enable`. На Windows всё это ставит мастер `install.bat`.
 - **Аккаунт HuggingFace** — модель gated: примите лицензию CC BY-NC 4.0 на страницах [small](https://huggingface.co/MuScriptor/muscriptor-small), [medium](https://huggingface.co/MuScriptor/muscriptor-medium) или [large](https://huggingface.co/MuScriptor/muscriptor-large) (доступ выдаётся автоматически).
 
 ### 2. Установка
@@ -31,7 +31,7 @@ uv run hf auth login
 
 ### 4. Запуск
 
-Проще всего — два батника в корне репозитория:
+Проще всего — три батника в корне репозитория:
 
 ```bat
 install.bat   :: мастер установки: оценка железа, uv, Node, зависимости, сборка UI, доступ к весам HF, выбор модели
@@ -54,8 +54,8 @@ uv run muscriptor transcribe song.mp3   # из командной строки
 
 - **GPU**: в `pyproject.toml` torch на Windows уже привязан к CUDA-индексу `cu128` (нужно для RTX 50xx). Без GPU-карты всё работает на CPU, только медленно.
 - **Кодировка консоли**: запуская через `Start-Process` с перенаправлением вывода, задайте `$env:PYTHONUTF8 = '1'` — иначе отладочный вывод модели падает на не-ASCII символах.
-- **MuseScore (ноты в PDF)**: [MuseScore 4+](https://musescore.org/en/download) ставится отдельно; стандартные пути установки (`C:\Program Files\MuseScore 4\bin\…`) находятся автоматически, для нестандартного пути задайте `MUSCRIPTOR_MUSESCORE`.
-- **FluidSynth (скачивание WAV)**: нужен бинарник `fluidsynth` в PATH; удобный способ — официальный [Windows-билд](https://github.com/FluidSynth/fluidsynth/releases), распакованный в `tools/fluidsynth` и добавленный в PATH процесса.
+- **MuseScore (ноты в PDF)**: [MuseScore 4+](https://musescore.org/en/download) ставится отдельно; стандартные пути установки (`C:\Program Files\MuseScore 4\bin\…`) находятся автоматически, для нестандартного пути задайте `MUSCRIPTOR_MUSESCORE`. Мастер `install.bat` (шаг 9) предложит установить его через winget, если его нет.
+- **FluidSynth (скачивание WAV)**: нужен бинарник `fluidsynth`; удобный способ — официальный [Windows-билд](https://github.com/FluidSynth/fluidsynth/releases), распакованный в `tools/fluidsynth` — `start.bat` добавит его в PATH сам, а мастер проверяет наличие на шаге 9.
 - **ffmpeg (удаление ведущего вокала)**: нужен в PATH; `install.bat` предложит установить через winget (`Gyan.FFmpeg`). Опция включается галочкой на экране загрузки или флагом `--remove-vocals` в CLI; веса модели разделения скачиваются при первом запуске и кешируются.
 
 ---
@@ -65,7 +65,7 @@ uv run muscriptor transcribe song.mp3   # из командной строки
 ### 1. Prerequisites
 
 - **uv** — see the [installation guide](https://docs.astral.sh/uv/getting-started/installation/).
-- **Node + pnpm** — only for the web UI: install Node [via pnpm](https://pnpm.io/installation), then `corepack enable pnpm`.
+- **Node + pnpm** — only for the web UI: install Node (22.19+) from [nodejs.org](https://nodejs.org), then `corepack enable`. On Windows the `install.bat` wizard does this for you.
 - **A HuggingFace account** — the model is gated: accept the CC BY-NC 4.0 license on the [small](https://huggingface.co/MuScriptor/muscriptor-small), [medium](https://huggingface.co/MuScriptor/muscriptor-medium) or [large](https://huggingface.co/MuScriptor/muscriptor-large) page (access is granted automatically).
 
 ### 2. Install
@@ -92,7 +92,7 @@ uv run hf auth login
 
 ### 4. Run
 
-The easiest way — two batch files in the repo root:
+The easiest way — three batch files in the repo root:
 
 ```bat
 install.bat   :: setup wizard: hardware assessment, uv, Node, deps, web UI build, HF weights access, model choice
@@ -115,6 +115,6 @@ The model can also be switched from the web UI (dropdown in the header); weights
 
 - **GPU**: on Windows `pyproject.toml` already pins torch to the `cu128` index (required for RTX 50xx). Without a GPU everything runs on CPU, just slower.
 - **Console encoding**: when launching with redirected output (`Start-Process`), set `$env:PYTHONUTF8 = '1'` — otherwise the model's debug output can crash on non-ASCII characters.
-- **MuseScore (PDF sheet music)**: install [MuseScore 4+](https://musescore.org/en/download) separately; standard install locations (`C:\Program Files\MuseScore 4\bin\…`) are detected automatically, otherwise set `MUSCRIPTOR_MUSESCORE`.
-- **FluidSynth (WAV downloads)**: a `fluidsynth` binary must be on PATH; the easiest way is the official [Windows build](https://github.com/FluidSynth/fluidsynth/releases) unpacked into `tools/fluidsynth` and added to the process PATH.
+- **MuseScore (PDF sheet music)**: install [MuseScore 4+](https://musescore.org/en/download) separately; standard install locations (`C:\Program Files\MuseScore 4\bin\…`) are detected automatically, otherwise set `MUSCRIPTOR_MUSESCORE`. The wizard offers to install it via winget when missing (step 9).
+- **FluidSynth (WAV downloads)**: needs a `fluidsynth` binary; the easiest way is the official [Windows build](https://github.com/FluidSynth/fluidsynth/releases) unpacked into `tools/fluidsynth` — `start.bat` adds it to the process PATH for you, and the wizard checks it in step 9.
 - **ffmpeg (lead-vocal removal)**: must be on PATH; `install.bat` offers to install it via winget (`Gyan.FFmpeg`). Enable the option with the checkbox on the upload screen or the `--remove-vocals` CLI flag; separation weights download on first use and are cached.
