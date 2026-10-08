@@ -37,9 +37,9 @@ def noise():
 
 @pytest.fixture(scope="module")
 def song_clip():
-    """First 10 seconds of filling_the_void.wav resampled to 16 kHz mono."""
-    if not SONG_PATH.exists():
-        pytest.skip(f"Song not found at {SONG_PATH}")
+    """First 10 seconds of a real song resampled to 16 kHz mono."""
+    if SONG_PATH is None or not SONG_PATH.exists():
+        pytest.skip("Set MUSCRIPTOR_TEST_SONG to an audio file to run this test")
     from muscriptor.utils.audio import load_audio
 
     wav = load_audio(SONG_PATH, target_sr=_SAMPLE_RATE)
@@ -323,8 +323,8 @@ def test_transcribe_song_to_midi(transcription_model, song_clip):
 
 def test_transcribe_song_from_file_path(transcription_model):
     """Transcribe directly from the file path (exercises load_audio)."""
-    if not SONG_PATH.exists():
-        pytest.skip(f"Song not found at {SONG_PATH}")
+    if SONG_PATH is None or not SONG_PATH.exists():
+        pytest.skip("Set MUSCRIPTOR_TEST_SONG to an audio file to run this test")
     events = list(transcription_model.transcribe(SONG_PATH))
     assert isinstance(events, list)
     assert len(events) > 0

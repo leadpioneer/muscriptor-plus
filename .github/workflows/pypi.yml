@@ -6,13 +6,17 @@ on:
 
 jobs:
   deploy:
+    # The PyPI name `muscriptor` belongs to the upstream repository: a release
+    # cut in a fork must never try to publish over it (the credentials or the
+    # name would fail, and at best it is confusing). Only upstream publishes.
+    if: github.repository == 'muscriptor/muscriptor'
     runs-on: ubuntu-latest
     environment:
       name: pypi
     permissions:
       id-token: write
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Install uv
       uses: astral-sh/setup-uv@v7
     - uses: actions/setup-node@v4

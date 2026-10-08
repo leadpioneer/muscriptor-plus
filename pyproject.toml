@@ -71,9 +71,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/muscriptor/muscriptor"
-Repository = "https://github.com/muscriptor/muscriptor"
-Issues = "https://github.com/muscriptor/muscriptor/issues"
+Homepage = "https://github.com/leadpioneer/muscriptor-plus"
+Repository = "https://github.com/leadpioneer/muscriptor-plus"
+Issues = "https://github.com/leadpioneer/muscriptor-plus/issues"
 
 [project.scripts]
 muscriptor = "muscriptor.main:main"
