@@ -145,9 +145,7 @@ def _color_units(notes: list[dict]) -> list[_Unit]:
     """
     by_key: dict[tuple[int, int], list[dict]] = {}
     for note in notes:
-        by_key.setdefault(
-            (note["onset_ticks"], note["offset_ticks"]), []
-        ).append(note)
+        by_key.setdefault((note["onset_ticks"], note["offset_ticks"]), []).append(note)
     units: list[_Unit] = []
     voice_ends: list[int] = []  # voice v (index v-1) is busy until this tick
     for onset, offset in sorted(by_key):

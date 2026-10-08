@@ -221,9 +221,7 @@ def solution_to_dict(solution: ArrangementSolution) -> dict:
             "note_count": sum(len(p.assigned) for p in solution.phrases),
             "phrase_count": len(solution.phrases),
             "event_count": sum(len(p.events) for p in solution.phrases),
-            "total_cost": round(
-                sum(p.cost for p in solution.phrases), 6
-            ),
+            "total_cost": round(sum(p.cost for p in solution.phrases), 6),
             "position_change_count": position_changes,
             "total_hand_position_travel": hand_travel,
             "largest_hand_position_shift": largest_shift,
@@ -264,8 +262,7 @@ def parse_overrides(text: str) -> dict[str, FretPosition]:
     version = document.get("version")
     if version != OVERRIDES_VERSION:
         raise InvalidOverridesError(
-            f"unsupported overrides version {version!r} "
-            f"(expected {OVERRIDES_VERSION})"
+            f"unsupported overrides version {version!r} (expected {OVERRIDES_VERSION})"
         )
     locks = document.get("locks")
     if not isinstance(locks, list):
@@ -288,13 +285,9 @@ def parse_overrides(text: str) -> dict[str, FretPosition]:
                 f"lock for {note_id!r}: string must be >= 1 (1 is highest)"
             )
         if fret < 0:
-            raise InvalidOverridesError(
-                f"lock for {note_id!r}: fret must be >= 0"
-            )
+            raise InvalidOverridesError(f"lock for {note_id!r}: fret must be >= 0")
         if note_id in positions:
-            raise InvalidOverridesError(
-                f"duplicate lock for note id {note_id!r}"
-            )
+            raise InvalidOverridesError(f"duplicate lock for note id {note_id!r}")
         positions[note_id] = FretPosition(string=string, fret=fret)
     return positions
 

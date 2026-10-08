@@ -109,7 +109,11 @@ def test_single_note_bearing_track_is_autoselected_drums_ignored():
                 mido_note_on(38, 100, 0, channel=9),
                 mido_note_on(38, 0, 120, channel=9),
             ],
-            [Meta_track_name("Guitar"), mido_note_on(64, 100, 0), mido_note_on(64, 0, 120)],
+            [
+                Meta_track_name("Guitar"),
+                mido_note_on(64, 100, 0),
+                mido_note_on(64, 0, 120),
+            ],
         ]
     )
     selected = select_notes(parse_midi(data))
@@ -120,8 +124,16 @@ def test_single_note_bearing_track_is_autoselected_drums_ignored():
 def test_several_tracks_is_ambiguous_with_candidates_listed():
     data = raw_midi(
         [
-            [Meta_track_name("Guitar"), mido_note_on(64, 100, 0), mido_note_on(64, 0, 120)],
-            [Meta_track_name("Bass"), mido_note_on(40, 100, 0), mido_note_on(40, 0, 120)],
+            [
+                Meta_track_name("Guitar"),
+                mido_note_on(64, 100, 0),
+                mido_note_on(64, 0, 120),
+            ],
+            [
+                Meta_track_name("Bass"),
+                mido_note_on(40, 100, 0),
+                mido_note_on(40, 0, 120),
+            ],
         ]
     )
     parsed = parse_midi(data)

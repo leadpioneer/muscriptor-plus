@@ -160,7 +160,14 @@ def test_guitar_tab_command_writes_tab_and_midi(tmp_path):
     midi_out = tmp_path / "out.mid"
     result = runner.invoke(
         app,
-        ["guitar-tab", str(arrangement), "--output", str(tab_path), "--midi", str(midi_out)],
+        [
+            "guitar-tab",
+            str(arrangement),
+            "--output",
+            str(tab_path),
+            "--midi",
+            str(midi_out),
+        ],
     )
     assert result.exit_code == 0, result.output
     tab = tab_path.read_text(encoding="utf-8")
@@ -171,7 +178,7 @@ def test_guitar_tab_command_writes_tab_and_midi(tmp_path):
 
 def test_guitar_tab_command_rejects_a_non_arrangement_file(tmp_path):
     bogus = tmp_path / "bogus.json"
-    bogus.write_text("{\"hello\": 1}", encoding="utf-8")
+    bogus.write_text('{"hello": 1}', encoding="utf-8")
     result = runner.invoke(app, ["guitar-tab", str(bogus)])
     assert result.exit_code == 1
     assert "unsupported arrangement schema_version" in result.output
@@ -182,8 +189,6 @@ def test_transcription_model_is_never_loaded(tmp_path):
     with patch(
         "muscriptor.transcription_model.TranscriptionModel.load_model"
     ) as load_model:
-        result = runner.invoke(
-            app, ["arrange-guitar", str(path), "--list-tracks"]
-        )
+        result = runner.invoke(app, ["arrange-guitar", str(path), "--list-tracks"])
         assert result.exit_code == 0
         load_model.assert_not_called()

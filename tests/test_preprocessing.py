@@ -6,12 +6,9 @@ against a fake preprocessor injected through `create_app`.
 """
 
 import sys
-import time
 import types
 import wave
-from importlib import import_module
 from pathlib import Path
-from unittest.mock import create_autospec
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,7 +18,6 @@ from muscriptor.preprocessing import PreprocessError, PreprocessResult
 from muscriptor.preprocessing.artifacts import StemStore
 from muscriptor.preprocessing.vocal_removal import VocalRemovalPreprocessor
 from muscriptor.server import create_app
-from muscriptor.transcription_model import TranscriptionModel
 
 from .test_server import FAKE_MIDI, _parse_sse, _wav_bytes, make_model
 
@@ -201,7 +197,9 @@ def test_preprocessor_maps_model_load_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(
         FakeSeparator,
         "load_model",
-        lambda self, model_filename: (_ for _ in ()).throw(RuntimeError("download failed")),
+        lambda self, model_filename: (_ for _ in ()).throw(
+            RuntimeError("download failed")
+        ),
     )
     input_path = tmp_path / "song.mp3"
     input_path.write_bytes(b"x")
@@ -353,9 +351,7 @@ def test_without_remove_vocals_the_preprocessor_is_never_used(tmp_path):
         return FakePreprocessor()
 
     model = make_model(events=_TWO_NOTES)
-    client = TestClient(
-        create_app(model, preprocessor_factory=factory)
-    )
+    client = TestClient(create_app(model, preprocessor_factory=factory))
     resp = _post(client, tmp_path)
     assert resp.status_code == 200
     parsed = _parse_sse(resp.text)

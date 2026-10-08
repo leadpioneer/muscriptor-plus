@@ -1,4 +1,4 @@
-﻿"""Chord (onset event) solver tests: shapes, locks, DP, structured errors.
+"""Chord (onset event) solver tests: shapes, locks, DP, structured errors.
 
 The named fixtures (E major, F major, the impossible 7-note event) are the
 acceptance fixtures of the v3 spec; every assertion is on the JSON document
@@ -15,12 +15,6 @@ from muscriptor.guitar_arrangement import (
     UnplayableChordError,
     arrange,
 )
-from muscriptor.guitar_arrangement.events import (
-    analyze_polyphony,
-    group_into_events,
-)
-from muscriptor.guitar_arrangement.models import MidiNote
-from muscriptor.guitar_arrangement.phrases import split_event_phrases
 
 from .midi_build import melody_midi
 
@@ -251,9 +245,7 @@ def test_dp_moves_early_note_for_a_higher_next_event():
     """Pitch 52 can sit at fret 2 (low) or fret 12+ (high); pitch 76 is only
     reachable high. The global DP must pre-position the first event high вЂ”
     a greedy solver would park it at the nut."""
-    document = arrange(
-        melody_midi([(52, 0, 480), (76, 480, 480)]), filename="s.mid"
-    )
+    document = arrange(melody_midi([(52, 0, 480), (76, 480, 480)]), filename="s.mid")
     first = _notes_by_pitch(document)[52]
     assert first["fret"] >= 12
     second = _notes_by_pitch(document)[76]

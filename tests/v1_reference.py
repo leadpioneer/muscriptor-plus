@@ -13,15 +13,11 @@ _V1_FRETS_PER_STEP = 1.0
 _V1_STRING_PER_STEP = 0.5
 
 
-def v1_transition_cost(
-    previous: FingeringState, following: FingeringState
-) -> float:
+def v1_transition_cost(previous: FingeringState, following: FingeringState) -> float:
     """The v1 cost: fret/string deltas of the notes, no hand state."""
     return _V1_FRETS_PER_STEP * abs(
         following.position.fret - previous.position.fret
-    ) + _V1_STRING_PER_STEP * abs(
-        following.position.string - previous.position.string
-    )
+    ) + _V1_STRING_PER_STEP * abs(following.position.string - previous.position.string)
 
 
 def solve_phrase_v1(notes, candidate_positions) -> float:

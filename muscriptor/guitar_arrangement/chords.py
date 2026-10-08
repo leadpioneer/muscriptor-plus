@@ -107,10 +107,7 @@ def generate_chord_shapes(
                 (n.note_id, n.position.string, n.position.fret, n.finger)
                 for n in shape.notes
             ),
-            tuple(
-                (b.finger, b.fret, b.from_string, b.to_string)
-                for b in shape.barres
-            ),
+            tuple((b.finger, b.fret, b.from_string, b.to_string) for b in shape.barres),
         )
         if key not in seen:
             seen.add(key)
@@ -209,9 +206,7 @@ def _state_variants(
     closed_frets = [p.fret for p in assignment if p.fret > 0]
     variants: list[ChordFingeringState] = []
     for hand_position in _hand_positions(closed_frets, config):
-        fingers, complete = _best_finger_annotation(
-            assignment, hand_position, config
-        )
+        fingers, complete = _best_finger_annotation(assignment, hand_position, config)
         barres = _barres_for(event, assignment, fingers)
         states = tuple(
             ChordNoteState(
@@ -439,9 +434,7 @@ def _shape_cost(
     span = (max(closed_frets) - min(closed_frets)) if closed_frets else 0
     open_count = sum(1 for p in assignment if p.fret == 0)
     cost = config.chord_span_weight * span
-    cost += config.barre_weight * sum(
-        b.to_string - b.from_string + 1 for b in barres
-    )
+    cost += config.barre_weight * sum(b.to_string - b.from_string + 1 for b in barres)
     if hand_position > config.high_position_start:
         cost += config.high_position_weight * (
             hand_position - config.high_position_start

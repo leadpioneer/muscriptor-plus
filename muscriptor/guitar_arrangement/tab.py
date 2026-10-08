@@ -55,7 +55,6 @@ def arrangement_json_to_tab(document) -> str:
 
     total_ticks = max(note["offset_ticks"] for note in notes if isinstance(note, dict))
     total_steps = total_ticks // step_ticks + 1
-    bar_ticks = BEATS_PER_BAR * tpb
 
     # grid[string][step] = fret label
     grid: dict[int, list[str]] = {

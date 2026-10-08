@@ -97,8 +97,7 @@ def transition_cost(
         if gap_beats >= config.rest_gap_beats:
             multiplier = min(multiplier, config.rest_gap_discount)
         cost += (
-            config.position_change_base
-            + config.position_change_per_fret * hand_shift
+            config.position_change_base + config.position_change_per_fret * hand_shift
         ) * multiplier
     cost += config.string_crossing_weight * abs(
         following.position.string - previous.position.string
@@ -110,7 +109,6 @@ def transition_cost(
     ):
         cost += config.finger_repeat_weight
     return cost
-
 
 
 def solve_phrase(
@@ -183,7 +181,6 @@ def solve_phrase(
     return _backtrack(notes, candidates, dp, locked_ids)
 
 
-
 def _backtrack(
     notes: tuple,
     candidates: tuple[tuple[FingeringState, ...], ...],
@@ -224,8 +221,7 @@ def _backtrack(
         cost=last_cells[best_k].cost,
         assigned=assigned,
         fret_travel=sum(
-            abs(b.position.fret - a.position.fret)
-            for a, b in zip(states, states[1:])
+            abs(b.position.fret - a.position.fret) for a, b in zip(states, states[1:])
         ),
         string_travel=sum(
             abs(b.position.string - a.position.string)
@@ -284,8 +280,7 @@ def explain_lines(solution: ArrangementSolution) -> list[str]:
     for phrase in solution.phrases:
         states = [a.state for a in phrase.assigned]
         shifts = [
-            abs(b.hand_position - a.hand_position)
-            for a, b in zip(states, states[1:])
+            abs(b.hand_position - a.hand_position) for a, b in zip(states, states[1:])
         ]
         changes = sum(1 for shift in shifts if shift)
         pitches = [a.note.pitch for a in phrase.assigned]
@@ -354,8 +349,7 @@ def chord_transition_cost(
         if gap_beats >= config.rest_gap_beats:
             multiplier = min(multiplier, config.rest_gap_discount)
         cost += (
-            config.position_change_base
-            + config.position_change_per_fret * hand_shift
+            config.position_change_base + config.position_change_per_fret * hand_shift
         ) * multiplier
     cost += config.string_movement_weight * abs(
         _string_centre(following) - _string_centre(previous)
@@ -467,8 +461,7 @@ def solve_event_phrase(
                 chord_open_string_penalty(
                     shape,
                     overlaps,
-                    len(shape.notes) == 1
-                    and shape.notes[0].note_id in locked_ids,
+                    len(shape.notes) == 1 and shape.notes[0].note_id in locked_ids,
                     config,
                 )
                 for shape in shapes
@@ -497,9 +490,7 @@ def solve_event_phrase(
                 cell = previous_cells[j]
                 replacement = _EventCell(
                     cost=cell.cost
-                    + chord_transition_cost(
-                        previous_shape, shape, gap_beats, config
-                    )
+                    + chord_transition_cost(previous_shape, shape, gap_beats, config)
                     + shape.shape_cost
                     + penalty,
                     hand_travel=cell.hand_travel
@@ -557,17 +548,13 @@ def solve_event_phrase(
                 )
             )
     # Flat view: onset, then pitch descending, then id — the event order.
-    assigned_notes.sort(
-        key=lambda a: (a.note.onset_ticks, -a.note.pitch, a.note.id)
-    )
+    assigned_notes.sort(key=lambda a: (a.note.onset_ticks, -a.note.pitch, a.note.id))
     states = [a.state for a in assigned_notes]
     fret_travel = sum(
-        abs(b.position.fret - a.position.fret)
-        for a, b in zip(states, states[1:])
+        abs(b.position.fret - a.position.fret) for a, b in zip(states, states[1:])
     )
     string_travel = sum(
-        abs(b.position.string - a.position.string)
-        for a, b in zip(states, states[1:])
+        abs(b.position.string - a.position.string) for a, b in zip(states, states[1:])
     )
     return PhraseSolution(
         index=0,  # renumbered by solve_event_phrases
@@ -645,9 +632,6 @@ def explain_chord_lines(solution: ArrangementSolution) -> list[str]:
             f"notes {len(phrase.assigned)}, cost {phrase.cost:.2f}"
         )
         for assigned_event in phrase.events:
-            marker = (
-                "chord" if len(assigned_event.event.notes) > 1 else "note "
-            )
+            marker = "chord" if len(assigned_event.event.notes) > 1 else "note "
             lines.append(f"  {marker} {_event_summary(assigned_event)}")
     return lines
-

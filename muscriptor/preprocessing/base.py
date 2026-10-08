@@ -1,6 +1,5 @@
 """Contracts shared by preprocessing steps."""
 
-import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Protocol

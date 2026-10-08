@@ -25,7 +25,6 @@ from muscriptor.guitar_arrangement import (
 )
 
 from .midi_build import melody_midi
-from .v1_reference import solve_phrase_v1
 
 
 def _note(index, pitch, onset, duration):
@@ -97,7 +96,6 @@ def _candidates(*specs):
     return tuple(tuple(spec) for spec in specs)
 
 
-
 def test_dp_moves_early_notes_to_avoid_a_late_jump():
     """The spec's key scenario, kept from v1 but now checked on hand_position:
     the phrase ends where only a high hand position works, and the solver must
@@ -152,9 +150,7 @@ def test_ties_are_broken_deterministically():
         _closed(1, 3, finger=1),
         _closed(1, 3, finger=1),
     ]
-    assert [a.state for a in first.assigned] == [
-        a.state for a in second.assigned
-    ]
+    assert [a.state for a in first.assigned] == [a.state for a in second.assigned]
 
 
 def test_empty_candidates_are_an_error_not_a_crash():
@@ -285,9 +281,7 @@ def test_arrangement_preserves_music_and_stays_physical(melody):
 
 def test_identical_input_gives_identical_output():
     data = melody_midi(_MELODIES[0])
-    assert arrange(data, filename="song.mid") == arrange(
-        data, filename="song.mid"
-    )
+    assert arrange(data, filename="song.mid") == arrange(data, filename="song.mid")
 
 
 # --- v2 regression tests (the v1 defect) ------------------------------------
@@ -296,8 +290,16 @@ def test_identical_input_gives_identical_output():
 def test_scale_does_not_crawl_up_one_string():
     """The reported defect: MIDI 60→72 was placed on one string, frets 1→13.
     v2 must prefer crossing strings in a small set of hand positions."""
-    scale = [(60, 0, 480), (62, 480, 480), (64, 960, 480), (65, 1440, 480),
-             (67, 1920, 480), (69, 2400, 480), (71, 2880, 480), (72, 3360, 960)]
+    scale = [
+        (60, 0, 480),
+        (62, 480, 480),
+        (64, 960, 480),
+        (65, 1440, 480),
+        (67, 1920, 480),
+        (69, 2400, 480),
+        (71, 2880, 480),
+        (72, 3360, 960),
+    ]
     result = arrange(melody_midi(scale), filename="song.mid")
     notes = result["notes"]
     metrics = result["metrics"]
@@ -332,18 +334,13 @@ def test_run_beyond_four_frets_shifts_or_crosses_explicitly():
         assert metrics["position_change_count"] >= 1
         assert metrics["total_hand_position_travel"] >= 2
     # Either way, the movement is visible in the dedicated metrics.
-    assert (
-        metrics["position_change_count"] >= 1
-        or metrics["total_string_travel"] >= 1
-    )
+    assert metrics["position_change_count"] >= 1 or metrics["total_string_travel"] >= 1
 
 
 def test_explain_lines_summarize_phrases():
     from muscriptor.guitar_arrangement import arrange_solution, explain_lines
 
-    solution = arrange_solution(
-        melody_midi(_MELODIES[0]), filename="song.mid"
-    )
+    solution = arrange_solution(melody_midi(_MELODIES[0]), filename="song.mid")
     lines = explain_lines(solution)
     assert len(lines) == len(solution.phrases)
     assert "pitch 64–71" in lines[0]
@@ -385,18 +382,19 @@ def test_two_thousand_events_with_chords_stay_bounded():
     data = melody_midi(notes)
     first = arrange(data, filename="song.mid")
     second = arrange(data, filename="song.mid")
-    assert first["metrics"]["note_count"] == sum(
-        len({(p, t) for p, t, _ in notes if t == ev})
-        for ev in range(0, 2000 * 240, 240)
-    ) or first["metrics"]["note_count"] > 2000
+    assert (
+        first["metrics"]["note_count"]
+        == sum(
+            len({(p, t) for p, t, _ in notes if t == ev})
+            for ev in range(0, 2000 * 240, 240)
+        )
+        or first["metrics"]["note_count"] > 2000
+    )
     assert json.dumps(first) == json.dumps(second)
     # Candidates never explode: per event bounded by the cap.
     for event in first["events"]:
         assert event["generated_candidates"] <= 5000
-        assert (
-            len(event["note_ids"])
-            <= 6
-        )
+        assert len(event["note_ids"]) <= 6
 
 
 # --- Open-string register penalty (solo open string far from the nut) ------
@@ -422,9 +420,7 @@ def _event_for(pitches, onsets=None, duration=240):
 def _shapes_for(pitches):
     from muscriptor.guitar_arrangement import generate_chord_shapes
 
-    return generate_chord_shapes(
-        _event_for(pitches), STANDARD_TUNING, SolverConfig()
-    )
+    return generate_chord_shapes(_event_for(pitches), STANDARD_TUNING, SolverConfig())
 
 
 def test_penalty_hits_only_solo_open_strings_above_the_free_position():
@@ -433,14 +429,10 @@ def test_penalty_hits_only_solo_open_strings_above_the_free_position():
     config = SolverConfig()
     shapes = _shapes_for((64,))  # E4: open string 1 or fretted below
     open_far = next(
-        s
-        for s in shapes
-        if s.notes[0].position.fret == 0 and s.hand_position == 7
+        s for s in shapes if s.notes[0].position.fret == 0 and s.hand_position == 7
     )
     open_near = next(
-        s
-        for s in shapes
-        if s.notes[0].position.fret == 0 and s.hand_position <= 3
+        s for s in shapes if s.notes[0].position.fret == 0 and s.hand_position <= 3
     )
     fretted = next(s for s in shapes if s.notes[0].position.fret > 0)
 
@@ -459,9 +451,9 @@ def test_penalty_hits_only_solo_open_strings_above_the_free_position():
         == 0.0
     )
     chord_shapes = _shapes_for((64, 74))  # includes open string 1 at hp 12–15
-    chord_with_open = next(s for s in chord_shapes if any(
-        n.position.fret == 0 for n in s.notes
-    ))
+    chord_with_open = next(
+        s for s in chord_shapes if any(n.position.fret == 0 for n in s.notes)
+    )
     assert len(chord_with_open.notes) == 2
     assert chord_open_string_penalty(chord_with_open, False, False, config) == 0.0
 
@@ -535,4 +527,3 @@ def test_chord_keeps_its_open_string_in_a_high_position():
     by_pitch = {n["pitch"]: (n["string"], n["fret"]) for n in result["notes"]}
     assert by_pitch[64] == (1, 0)
     assert by_pitch[74] == (2, 15)
-

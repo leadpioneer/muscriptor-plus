@@ -26,8 +26,7 @@ def split_phrases(
             phrases.append([])
         phrases[-1].append(note)
     return tuple(
-        Phrase(index=index, notes=tuple(group))
-        for index, group in enumerate(phrases)
+        Phrase(index=index, notes=tuple(group)) for index, group in enumerate(phrases)
     )
 
 

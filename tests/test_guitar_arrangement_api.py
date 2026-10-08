@@ -134,7 +134,13 @@ def test_arrangement_to_musicxml_endpoint_returns_fingering_preserving_xml():
     document = arrange_resp.json()
     resp = _client().post(
         "/arrange/guitar/musicxml",
-        files={"document": ("arrangement.json", json.dumps(document).encode(), "application/json")},
+        files={
+            "document": (
+                "arrangement.json",
+                json.dumps(document).encode(),
+                "application/json",
+            )
+        },
     )
     assert resp.status_code == 200
     assert "musicxml" in resp.headers["content-type"]
@@ -151,7 +157,13 @@ def test_arrangement_to_pdf_endpoint_engraves_via_musescore():
     document = _post(_client(), data=data).json()
     resp = _client().post(
         "/arrange/guitar/pdf",
-        files={"document": ("arrangement.json", json.dumps(document).encode(), "application/json")},
+        files={
+            "document": (
+                "arrangement.json",
+                json.dumps(document).encode(),
+                "application/json",
+            )
+        },
     )
     assert resp.status_code == 200
     archive = zipfile.ZipFile(io.BytesIO(resp.content))
@@ -172,7 +184,13 @@ def test_arrangement_to_pdf_endpoint_503_without_musescore(monkeypatch):
     document = _post(_client(), data=data).json()
     resp = _client().post(
         "/arrange/guitar/pdf",
-        files={"document": ("arrangement.json", json.dumps(document).encode(), "application/json")},
+        files={
+            "document": (
+                "arrangement.json",
+                json.dumps(document).encode(),
+                "application/json",
+            )
+        },
     )
     assert resp.status_code == 503
     detail = resp.json()["detail"]
@@ -182,7 +200,13 @@ def test_arrangement_to_pdf_endpoint_503_without_musescore(monkeypatch):
 def test_arrangement_to_pdf_endpoint_gives_400_for_a_broken_document():
     resp = _client().post(
         "/arrange/guitar/pdf",
-        files={"document": ("arrangement.json", b"{\"schema_version\": 9}", "application/json")},
+        files={
+            "document": (
+                "arrangement.json",
+                b'{"schema_version": 9}',
+                "application/json",
+            )
+        },
     )
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "unsupported_arrangement_schema"
@@ -254,7 +278,9 @@ def test_arrangement_to_midi_endpoint_round_trips():
     document = arrange_resp.json()
     resp = _client().post(
         "/arrange/guitar/midi",
-        files={"document": ("arrangement.json", arrange_resp.content, "application/json")},
+        files={
+            "document": ("arrangement.json", arrange_resp.content, "application/json")
+        },
     )
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("audio/midi")
@@ -302,7 +328,9 @@ def test_arrangement_to_tab_endpoint_returns_text():
     arrange_resp = _post(_client())
     resp = _client().post(
         "/arrange/guitar/tab",
-        files={"document": ("arrangement.json", arrange_resp.content, "application/json")},
+        files={
+            "document": ("arrangement.json", arrange_resp.content, "application/json")
+        },
     )
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/plain")

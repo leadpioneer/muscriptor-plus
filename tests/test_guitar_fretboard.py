@@ -27,9 +27,7 @@ def test_possible_positions_for_e4():
     assert FretPosition(string=5, fret=19) in positions
     assert FretPosition(string=6, fret=24) in positions
     # Deterministic order: ascending fret, then string.
-    assert positions == tuple(
-        sorted(positions, key=lambda p: (p.fret, p.string))
-    )
+    assert positions == tuple(sorted(positions, key=lambda p: (p.fret, p.string)))
 
 
 def test_pitch_below_every_string_is_an_error():
@@ -88,7 +86,6 @@ def test_generator_supports_any_number_of_strings():
 # --- Ergonomic fingerings (v2) ----------------------------------------------
 
 from muscriptor.guitar_arrangement import (  # noqa: E402
-    FingeringState,
     SolverConfig,
     possible_fingerings,
 )

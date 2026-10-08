@@ -271,8 +271,7 @@ class MelodyReduction:
             "policy": self.policy,
             "dropped_note_count": self.dropped_note_count,
             "dropped": [
-                {"tick": note.onset_ticks, "pitch": note.pitch}
-                for note in self.dropped
+                {"tick": note.onset_ticks, "pitch": note.pitch} for note in self.dropped
             ],
         }
 
@@ -399,7 +398,9 @@ class ChordFingeringState:
         return (
             round(self.shape_cost, 6),
             self.hand_position,
-            tuple((n.position.string, n.position.fret, n.finger or -1) for n in self.notes),
+            tuple(
+                (n.position.string, n.position.fret, n.finger or -1) for n in self.notes
+            ),
         )
 
 

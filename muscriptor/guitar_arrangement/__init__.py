@@ -99,6 +99,7 @@ __all__ = [
     "GuitarArrangementError",
     "GuitarTuning",
     "IncompatibleChordLocksError",
+    "InvalidArrangementError",
     "InvalidMelodyPolicyError",
     "InvalidOverridesError",
     "MELODY_POLICIES",

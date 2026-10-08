@@ -106,9 +106,7 @@ def test_f_major_locked_positions_carry_into_the_xml():
     # Fingers are annotated where the allocator knows them.
     fingerings = [
         t.findtext("fingering")
-        for t in ET.fromstring(arrangement_json_to_musicxml(document)).iter(
-            "technical"
-        )
+        for t in ET.fromstring(arrangement_json_to_musicxml(document)).iter("technical")
     ]
     assert all(f is not None for f in fingerings)
 
@@ -116,9 +114,7 @@ def test_f_major_locked_positions_carry_into_the_xml():
 def test_overlapping_durations_use_voices_not_sequences():
     """A long bass note rings into the next melody note: both keep their
     full durations, in different MusicXML voices."""
-    document = arrange(
-        melody_midi([(40, 0, 4800), (67, 2400, 480)]), filename="s.mid"
-    )
+    document = arrange(melody_midi([(40, 0, 4800), (67, 2400, 480)]), filename="s.mid")
     xml_bytes = arrangement_json_to_musicxml(document)
     root = ET.fromstring(xml_bytes)
     sounding = [n for n in root.iter("note") if n.find("rest") is None]
@@ -136,9 +132,7 @@ def test_staggered_chord_members_get_separate_voices_and_keep_durations():
     """Two notes of ONE onset event with different durations must not share
     a <chord/>: chord members with different durations break the engraver's
     measure accounting (MuseScore crash). Each keeps its exact duration."""
-    document = arrange(
-        melody_midi([(60, 0, 480), (64, 0, 240)]), filename="s.mid"
-    )
+    document = arrange(melody_midi([(60, 0, 480), (64, 0, 240)]), filename="s.mid")
     root = ET.fromstring(arrangement_json_to_musicxml(document))
     sounding = [n for n in root.iter("note") if n.find("rest") is None]
     long_note = next(n for n in sounding if n.findtext("duration") == "480")
@@ -170,7 +164,9 @@ def _measure_voice_balance(root, ticks_per_beat: int):
                 if element.find("chord") is not None:
                     continue  # shares the previous note's onset
                 cursor += duration
-                voice_written[current_voice] = voice_written.get(current_voice, 0) + duration
+                voice_written[current_voice] = (
+                    voice_written.get(current_voice, 0) + duration
+                )
             elif element.tag == "backup":
                 step = int(element.text or "0")
                 cursor -= step
@@ -221,8 +217,15 @@ def test_every_note_carries_an_explicit_type():
     for note in notes:
         assert note.findtext("type"), "note without <type>"
         assert note.findtext("type") in {
-            "breve", "whole", "half", "quarter",
-            "eighth", "16th", "32nd", "64th", "128th",
+            "breve",
+            "whole",
+            "half",
+            "quarter",
+            "eighth",
+            "16th",
+            "32nd",
+            "64th",
+            "128th",
         }
 
 
@@ -246,14 +249,10 @@ def test_output_is_deterministic_and_parses():
 
 
 def test_duration_values_are_source_ticks():
-    document = arrange(
-        melody_midi([(64, 0, 123), (67, 480, 999)]), filename="s.mid"
-    )
+    document = arrange(melody_midi([(64, 0, 123), (67, 480, 999)]), filename="s.mid")
     root = ET.fromstring(arrangement_json_to_musicxml(document))
     durations = sorted(
-        int(n.findtext("duration"))
-        for n in root.iter("note")
-        if n.find("rest") is None
+        int(n.findtext("duration")) for n in root.iter("note") if n.find("rest") is None
     )
     assert durations == [123, 999]  # divisions == ticks_per_beat == 480
 

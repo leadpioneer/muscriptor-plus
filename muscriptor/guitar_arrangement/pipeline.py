@@ -5,8 +5,6 @@ from disk itself (bytes in, dict out) and knows nothing about FastAPI or
 Typer, so the whole flow stays testable without either.
 """
 
-import dataclasses
-
 from .errors import (
     InvalidMelodyPolicyError,
     InvalidOverridesError,
@@ -78,13 +76,10 @@ def arrange_solution(
     """
     if melody_policy not in ("off", "top", "bottom"):
         raise InvalidMelodyPolicyError(
-            f"unknown melody policy {melody_policy!r} "
-            "(expected off, top or bottom)"
+            f"unknown melody policy {melody_policy!r} (expected off, top or bottom)"
         )
     if config is None:
-        config = SolverConfig(
-            max_fret=max_fret, phrase_gap_beats=phrase_gap_beats
-        )
+        config = SolverConfig(max_fret=max_fret, phrase_gap_beats=phrase_gap_beats)
     tuning = resolve_tuning(tuning_name)
     parsed = parse_midi(midi_data)
     selected = select_notes(parsed, track=track, channel=channel)
@@ -96,18 +91,14 @@ def arrange_solution(
     # The structural too-many-notes error (7+ notes on one onset) outranks
     # the range check: it fires first in the solver, so the pre-validation
     # must not mask it.
-    if all(
-        len(event.notes) <= tuning.string_count for event in events
-    ):
+    if all(len(event.notes) <= tuning.string_count for event in events):
         _validate_fretboard_range(notes, tuning, config)
     polyphony = analyze_polyphony(events)
     event_phrases = split_event_phrases(
         events, parsed.ticks_per_beat, config.phrase_gap_beats
     )
     locked = (
-        _validate_locks(notes, overrides_text, tuning, config)
-        if overrides_text
-        else {}
+        _validate_locks(notes, overrides_text, tuning, config) if overrides_text else {}
     )
     return ArrangementSolution(
         source=SourceInfo(
@@ -150,9 +141,7 @@ def _validate_fretboard_range(notes: tuple, tuning, config: SolverConfig) -> Non
     sample = ", ".join(
         f"pitch {n.pitch} at tick {n.onset_ticks}" for n in offenders[:5]
     )
-    more = (
-        f" (and {len(offenders) - 5} more)" if len(offenders) > 5 else ""
-    )
+    more = f" (and {len(offenders) - 5} more)" if len(offenders) > 5 else ""
     error = UnplayableNoteError(
         f"{len(offenders)} of {len(notes)} notes lie outside the fretboard: "
         f"the tuned strings cover MIDI {low}–{high} "
@@ -181,8 +170,6 @@ def _validate_locks(
     A lock may only pin a position that produces the note's original pitch —
     a lock that would change the pitch is an error, never a transposition.
     """
-    from .serialization import parse_overrides
-
     locks = parse_overrides(overrides_text)
     by_id = {note.id: note for note in notes}
     for note_id, position in locks.items():

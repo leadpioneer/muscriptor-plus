@@ -50,9 +50,7 @@ def melody_midi(
             )
         else:
             track.append(
-                Message(
-                    "note_off", channel=channel, note=pitch, velocity=0, time=delta
-                )
+                Message("note_off", channel=channel, note=pitch, velocity=0, time=delta)
             )
     buffer = io.BytesIO()
     midi.save(file=buffer)

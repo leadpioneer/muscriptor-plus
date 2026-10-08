@@ -98,8 +98,7 @@ class VocalRemovalPreprocessor:
                 separator.load_model(settings.model_id)
             except Exception as e:
                 raise ModelLoadError(
-                    f"could not load separation model "
-                    f"'{settings.model_id}': {e}"
+                    f"could not load separation model '{settings.model_id}': {e}"
                 ) from e
 
             report(0.3, "separating vocals from instrumental")
@@ -194,7 +193,9 @@ def _find_stem(produced: list[str], stem: str) -> Path | None:
                 "other" in name and "vocals.wav" not in name
             )
         else:
-            hit = "vocals" in name and "instrumental" not in name and "other" not in name
+            hit = (
+                "vocals" in name and "instrumental" not in name and "other" not in name
+            )
         if hit:
             return Path(path)
     return None
@@ -207,4 +208,3 @@ def _duration_seconds(path: Path) -> float:
         return float(sf.info(str(path)).duration)
     except Exception:  # noqa: BLE001 — metadata only, never fail the run for it
         return 0.0
-

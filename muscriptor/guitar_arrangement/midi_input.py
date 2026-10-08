@@ -111,9 +111,7 @@ def parse_midi(data: bytes) -> ParsedMidi:
                 if msg.type == "track_name" and name is None:
                     name = msg.name
                 elif msg.type == "set_tempo":
-                    tempo_events.append(
-                        TempoEvent(tick=tick, tempo=int(msg.tempo))
-                    )
+                    tempo_events.append(TempoEvent(tick=tick, tempo=int(msg.tempo)))
                 elif msg.type == "time_signature":
                     time_signature_events.append(
                         TimeSignatureEvent(
@@ -131,9 +129,9 @@ def parse_midi(data: bytes) -> ParsedMidi:
                 note_on = msg.type == "note_on" and msg.velocity > 0
                 if note_on:
                     note_ordinal += 1
-                    pending.setdefault(
-                        (msg.channel, msg.note), deque()
-                    ).append((note_ordinal, msg.channel, msg.note, tick, msg.velocity))
+                    pending.setdefault((msg.channel, msg.note), deque()).append(
+                        (note_ordinal, msg.channel, msg.note, tick, msg.velocity)
+                    )
                 else:
                     # note_off, or note_on with velocity 0 (same thing per
                     # the MIDI spec). mido calls the MIDI note number `note`.
@@ -202,10 +200,7 @@ def _flush_unmatched(track_index, pending, final_tick, combo) -> None:
         for ordinal, _ch, pitch, onset, velocity in queue:
             combo(track_index, channel)["notes"].append(
                 MidiNote(
-                    id=(
-                        f"track:{track_index}/channel:{channel}"
-                        f"/note:{ordinal}"
-                    ),
+                    id=(f"track:{track_index}/channel:{channel}/note:{ordinal}"),
                     track_index=track_index,
                     channel=channel,
                     pitch=pitch,
@@ -313,4 +308,3 @@ def check_monophonic(notes: tuple[MidiNote, ...]) -> None:
                 note_ids=ids,
                 pitches=pitches,
             )
-

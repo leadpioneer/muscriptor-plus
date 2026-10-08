@@ -2,7 +2,10 @@
 
 import pytest
 
-from muscriptor.guitar_arrangement import InvalidArrangementError, arrangement_json_to_tab
+from muscriptor.guitar_arrangement import (
+    InvalidArrangementError,
+    arrangement_json_to_tab,
+)
 
 BASE = {
     "schema_version": 2,
@@ -14,7 +17,13 @@ BASE = {
     "notes": [
         {"pitch": 64, "string": 1, "fret": 0, "onset_ticks": 0, "offset_ticks": 480},
         {"pitch": 67, "string": 1, "fret": 3, "onset_ticks": 480, "offset_ticks": 960},
-        {"pitch": 43, "string": 5, "fret": 10, "onset_ticks": 960, "offset_ticks": 1920},
+        {
+            "pitch": 43,
+            "string": 5,
+            "fret": 10,
+            "onset_ticks": 960,
+            "offset_ticks": 1920,
+        },
     ],
 }
 

@@ -114,7 +114,12 @@ def _meta_events(source: dict, schema_version: int):
     if schema_version < 3:
         return
     for event in source.get("tempo_events") or []:
-        yield (event.get("tick", 0), 0, 0, MetaMessage("set_tempo", tempo=event["tempo"], time=0))
+        yield (
+            event.get("tick", 0),
+            0,
+            0,
+            MetaMessage("set_tempo", tempo=event["tempo"], time=0),
+        )
     for event in source.get("time_signature_events") or []:
         yield (
             event.get("tick", 0),
@@ -125,9 +130,7 @@ def _meta_events(source: dict, schema_version: int):
                 numerator=event["numerator"],
                 denominator=event["denominator"],
                 clocks_per_click=event.get("clocks_per_click", 24),
-                notated_32nd_notes_per_beat=event.get(
-                    "notated_32nd_notes_per_beat", 8
-                ),
+                notated_32nd_notes_per_beat=event.get("notated_32nd_notes_per_beat", 8),
                 time=0,
             ),
         )
@@ -153,15 +156,10 @@ def arrangement_json_to_midi(document) -> bytes:
     if program is not None:
         track.append(Message("program_change", program=program, channel=0, time=0))
 
-    events = sorted(
-        _iter_note_events(document["notes"]), key=lambda e: (e[0], e[1])
-    )
+    events = sorted(_iter_note_events(document["notes"]), key=lambda e: (e[0], e[1]))
     meta_events = sorted(_meta_events(source, schema_version), key=lambda e: e[:3])
     merged = sorted(
-        [
-            (tick, kind, 2, message)
-            for tick, kind, message in events
-        ]
+        [(tick, kind, 2, message) for tick, kind, message in events]
         + list(meta_events),
         key=lambda e: (e[0], e[1], e[2]),
     )

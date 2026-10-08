@@ -108,7 +108,9 @@ def test_invalid_documents_are_rejected():
     bad_offset = {
         "schema_version": 2,
         "source": {"ticks_per_beat": 480, "program": 24, "track_name": "x"},
-        "notes": [{"pitch": 60, "onset_ticks": 10, "offset_ticks": 10, "velocity": 100}],
+        "notes": [
+            {"pitch": 60, "onset_ticks": 10, "offset_ticks": 10, "velocity": 100}
+        ],
     }
     with pytest.raises(InvalidArrangementError):
         arrangement_json_to_midi(bad_offset)
@@ -149,7 +151,7 @@ def test_polyphonic_event_round_trips_all_notes():
 
 
 def test_tempo_and_time_signature_maps_are_written_back():
-    from mido import MetaMessage, MidiTrack
+    from mido import MetaMessage
 
     from .midi_build import raw_midi
 

@@ -190,8 +190,7 @@ def resolve_instrument_names(tokens: Iterable[str]) -> list[str]:
             resolved.append(hits[0])
         elif hits:
             raise ValueError(
-                f"ambiguous instrument name {token!r}: "
-                f"matches {', '.join(hits)}"
+                f"ambiguous instrument name {token!r}: matches {', '.join(hits)}"
             )
         else:
             # Compare against each name AND its underscore-separated words,
@@ -204,11 +203,7 @@ def resolve_instrument_names(tokens: Iterable[str]) -> list[str]:
 
             ranked = sorted(MT3_FULL_PLUS_GROUP_NAMES, key=closeness, reverse=True)
             suggestions = [n for n in ranked[:3] if closeness(n) >= 0.6]
-            hint = (
-                f" — did you mean {', '.join(suggestions)}?"
-                if suggestions
-                else ""
-            )
+            hint = f" — did you mean {', '.join(suggestions)}?" if suggestions else ""
             raise ValueError(f"unknown instrument name {token!r}{hint}")
     return resolved
 
