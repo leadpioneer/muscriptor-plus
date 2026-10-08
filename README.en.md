@@ -154,14 +154,27 @@ uv run muscriptor serve --idle-unload 10         # unload the model after 10 min
 ## Guitar fingering arranger (MIDI → strings/frets)
 
 A separate symbolic module for guitar parts: it takes a **MIDI file (not
-audio)** and, for one track, picks a string and a fret for every note.
-Pitches, onsets and durations are **never changed** — no octave shifts, no
-transposition, and no "suspicious" notes are dropped. The optimization is
-global: phrases (separated by full silence of ≥ 1 beat) are solved as a whole
-with dynamic programming, so early notes may be moved up the neck to avoid a
-big jump at the end of a phrase. The result is an optimum with respect to the
-current cost function (fret/string movement, a penalty for large position
-changes, a weak high-fret penalty) — not "perfect fingering".
+audio)** and, for one track, picks a string and a fret for every note. The
+part is **fitted to the standard tuning** first: a detuned recording
+(typically half a step down, low notes below E2) is transposed by the smallest
+offset that makes it playable, and out-of-range notes that duplicate
+themselves an octave up (transcription artefacts) are removed. Both the
+transposition and every removal are reported in the document's
+`normalization` block; `--no-normalize` disables this and turns such notes
+into a plain error. Within range the optimization is global: phrases
+(separated by full silence of ≥ 1 beat) are solved as a whole with dynamic
+programming, so early notes may be moved up the neck to avoid a big jump at
+the end of a phrase. When an onset has more notes than strings (melody over a
+chord, say), the best playable subset is kept by default and reported in
+`chord_reductions` (`--chord-overflow error` returns a structured error
+instead); this also rescues onsets that have no compatible fingering at all
+(a melody note hanging over a chord between positions), not just onsets with
+more notes than strings. Jazz chord symbols are detected over the finished
+timeline (the document's `chords` block): MusicXML and PDF render them above
+the staff, and left-hand finger numbers are hidden by default — the tab
+already shows the positions. The result is an optimum with respect to the current cost
+function (fret/string movement, a penalty for large position changes, a weak
+high-fret penalty) — not "perfect fingering".
 
 String numbering: **1 is the highest** (standard tuning: E4, B3, G3, D3, A2,
 E2). The track is picked automatically when there is exactly one non-drum

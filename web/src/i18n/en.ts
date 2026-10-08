@@ -300,7 +300,7 @@ export const FAQ_EN: { q: string; a: string }[] = [
   },
   {
     q: "Can it give me guitar tabs?",
-    a: "Yes. Fretted instruments like guitar and bass also yield a tablature PDF, next to the standard notation. Download it from the sheet music menu after transcribing. It does not write chord symbols, only the notes that are actually played. If the suggested fingering doesn't fit, open \"Edit fingering\": the Guitar Arranger Lab lets you pin strings and frets and export MusicXML/PDF that keep them.",
+    a: "Yes. Fretted instruments like guitar and bass also yield a tablature PDF, next to the standard notation. Download it from the sheet music menu after transcribing. If the suggested fingering doesn't fit, open \"Edit fingering\": the Guitar Arranger Lab lets you pin strings and frets, and its MusicXML/PDF exports come with jazz chord symbols above the staff.",
   },
   {
     q: "Can I run it locally or use it from Python?",

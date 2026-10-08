@@ -194,28 +194,33 @@ Multipart-поля с несколькими значениями (наприм�
 | `phrase_gap_beats` | `1.0` | Тишина (в долях), начиная с которой фраза делится |
 | `melody` | `off` | `off` / `top` / `bottom` |
 | `overrides` | — | Строка JSON с фиксациями (`{"version":1,"locks":[…]}`) |
+| `normalize` | `true` | Привести партию к стандартному строю (транспозиция + удаление внедиапазонных октавных дублей), отчёт — в блоке `normalization` |
+| `chord_overflow` | `reduce` | Что делать с онсетами, которые нельзя сыграть целиком (нот больше струн или нет совместимой аппликатуры): `reduce` — сократить до лучшей играбельной подстановки (отчёт в `chord_reductions`); `error` — вернуть структурную ошибку |
+| `chords` | `true` | Определить джазовые обозначения аккордов и записать их в блок `chords` документа |
 
-Ответ: JSON-документ schema v3 (`Content-Type: application/json`).
+Ответ: JSON-документ schema v3 (`Content-Type: application/json`), включая
+производные блоки `normalization`, `chord_reductions` и `chords`.
 Структурированные ошибки: `400` для нечитаемого MIDI, неизвестного строя,
 битых фиксаций и неверной мелодической политики; `422` для неоднозначной
-дорожки, неполифонически играбельного аккорда, ноты вне грифа и слишком
-большого числа нот на онсете. Полный разбор — в
+дорожки, ноты вне грифа (после нормализации) и неиграбельного онсета при
+`chord_overflow=error`. Полный разбор — в
 [guitar-arranger.md](guitar-arranger.md).
 
 ## Конвертеры arrangement.json
 
-Все четыре эндпоинта принимают форму с единственным полем `document` —
+Все четыре эндпоинта принимают форму с полем `document` —
 подтверждённый `arrangement.json` (schema v2 или v3):
 
 | Эндпоинт | Ответ |
 |---|---|
 | `POST /arrange/guitar/midi` | `audio/midi`, имя `<stem>.mid`. Высоты/тайминги/скорости как в документе; выбранные струна/лад в MIDI не переносятся |
 | `POST /arrange/guitar/tab` | `text/plain; charset=utf-8` — ASCII-табулатура (сетка 16-х, черты каждые 4 доли) |
-| `POST /arrange/guitar/musicxml` | `application/vnd.recordare.musicxml+xml` — MusicXML с `<technical><string>/<fret></technical>` у каждой ноты |
-| `POST /arrange/guitar/pdf` | `application/zip`, имя `<stem>_score.zip`: `full_score.pdf` (ноты + табулатура, MuseScore) и `<stem>.musicxml` |
+| `POST /arrange/guitar/musicxml` | `application/vnd.recordare.musicxml+xml` — MusicXML с `<technical><string>/<fret></technical>` у каждой ноты; поля формы `chords` (по умолчанию `true` — рисовать блок `chords` как `<harmony>`) и `fingerings` (по умолчанию `false` — номера пальцев левой руки) |
+| `POST /arrange/guitar/pdf` | `application/zip`, имя `<stem>_score.zip`: `full_score.pdf` (ноты + табулатура + аккорды, MuseScore) и `<stem>.musicxml`; поля формы `chords`/`fingerings` — как выше |
 
 `400` — документ не JSON или не проходит валидацию (в том числе
-неподдерживаемая `schema_version`). `pdf` дополнительно: `503`, если нет
+неподдерживаемая `schema_version` или неизвестный код качества аккорда).
+`pdf` дополнительно: `503`, если нет
 MuseScore; `500` (`{"code": "fingering_export_failed", ...}`), если MuseScore
 не смог записать PDF.
 
