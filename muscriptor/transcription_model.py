@@ -3,9 +3,9 @@
 import contextlib
 import io
 import json
+import logging
 import math
 import re
-import sys
 import time
 import warnings
 from collections.abc import Callable, Iterator
@@ -54,16 +54,18 @@ from muscriptor.utils.beats import (
 from muscriptor.utils.download import download_companion, download_if_necessary
 from muscriptor.utils.midi import notes_to_midi
 
+logger = logging.getLogger(__name__)
+
 
 @contextlib.contextmanager
 def _timed(label: str, store: list[tuple[str, float]] | None = None):
-    """Print and (optionally) record how long a block of work takes."""
+    """Log and (optionally) record how long a block of work takes."""
     muscriptor.accelerator.synchronize()
     t0 = time.perf_counter()
     yield
     muscriptor.accelerator.synchronize()
     dt = time.perf_counter() - t0
-    print(f"[muscriptor] {label}: {dt:.2f}s", file=sys.stderr)
+    logger.info("[muscriptor] %s: %.2fs", label, dt)
     if store is not None:
         store.append((label, dt))
 
@@ -408,9 +410,11 @@ class TranscriptionModel:
         segment_samples = int(_SEGMENT_DURATION * _SAMPLE_RATE)
         num_chunks = math.ceil(total_samples / segment_samples)
         max_gen_len = 2000
-        print(
-            f"[muscriptor] audio: {total_duration:.1f}s → {num_chunks} chunk(s) of {_SEGMENT_DURATION}s",
-            file=sys.stderr,
+        logger.info(
+            "[muscriptor] audio: %.1fs → %d chunk(s) of %ss",
+            total_duration,
+            num_chunks,
+            _SEGMENT_DURATION,
         )
 
         with _timed("build conditions", timings):
@@ -452,14 +456,11 @@ class TranscriptionModel:
         )
 
         muscriptor.accelerator.synchronize()
-        print(
-            f"[muscriptor] generate total: {time.perf_counter() - t_gen:.2f}s",
-            file=sys.stderr,
-        )
-        print(
-            f"[muscriptor] transcribe total: {time.perf_counter() - t_total:.2f}s "
-            f"({total_duration:.1f}s audio)",
-            file=sys.stderr,
+        logger.info("[muscriptor] generate total: %.2fs", time.perf_counter() - t_gen)
+        logger.info(
+            "[muscriptor] transcribe total: %.2fs (%.1fs audio)",
+            time.perf_counter() - t_total,
+            total_duration,
         )
 
     def _resolve_batch_size(self, batch_size: int | None, prelude_forcing: bool) -> int:
@@ -689,10 +690,7 @@ class TranscriptionModel:
         except BeatDetectionError as e:
             if mode is True:
                 raise
-            print(
-                f"Warning: {e}; falling back to the placeholder tempo",
-                file=sys.stderr,
-            )
+            logger.warning("Warning: %s; falling back to the placeholder tempo", e)
             return None
 
     def events_to_midi_bytes(

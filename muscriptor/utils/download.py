@@ -1,9 +1,12 @@
 """Weight download utility with caching in ~/.cache/muscriptor/."""
 
 import hashlib
+import logging
 import os
+import shutil
 import urllib.request
 from pathlib import Path
+
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import (
     GatedRepoError,
@@ -12,8 +15,13 @@ from huggingface_hub.errors import (
 )
 from huggingface_hub.utils import EntryNotFoundError
 
+logger = logging.getLogger(__name__)
 
 _CACHE_DIR = Path.home() / ".cache" / "muscriptor"
+
+# Applied by urlopen to the connection and to every blocking read: a hung
+# server must not wedge transcription forever.
+_HTTP_TIMEOUT_S = 60
 
 
 class ModelDownloadError(RuntimeError):
@@ -74,13 +82,15 @@ def download_if_necessary(url: str | Path) -> Path:
         dest = _CACHE_DIR / f"{url_hash}_{filename}"
         if dest.exists():
             return dest
-        print(f"Downloading {filename} …")
+        logger.info("Downloading %s …", filename)
         # Download to a per-process temp file, then rename: an interrupted or
         # concurrent download must never leave a partial file at `dest`, where
         # it would be mistaken for a complete one forever after.
         tmp = dest.with_name(f"{dest.name}.part{os.getpid()}")
         try:
-            urllib.request.urlretrieve(url, tmp)
+            with urllib.request.urlopen(url, timeout=_HTTP_TIMEOUT_S) as response:
+                with open(tmp, "wb") as out:
+                    shutil.copyfileobj(response, out)
             os.replace(tmp, dest)
         finally:
             tmp.unlink(missing_ok=True)

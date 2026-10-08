@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import logging
 import sys
 from enum import Enum
 from pathlib import Path
@@ -279,6 +280,10 @@ def transcribe(
     ] = "best-effort",
 ) -> None:
     """Transcribe an audio file to MIDI."""
+    # The model reports progress/timings through the logging module; without
+    # this the CLI would stay silent (the default level is WARNING). Plain
+    # messages only — they already carry their own [muscriptor] prefix.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     instrument_names: list[str] | None = None
     if instruments is not None:
         tokens = [n for n in instruments.split(",") if n.strip()]
@@ -494,8 +499,6 @@ def serve(
     ] = 5,
 ):
     """Run the HTTP transcription server (POST /transcribe → SSE event stream)."""
-    import logging
-
     import uvicorn
 
     from muscriptor.server import create_app
@@ -538,9 +541,7 @@ def list_instruments():
 
 @app.command("arrange-guitar")
 def arrange_guitar(
-    midi_file: Annotated[
-        Path, typer.Argument(help="Input MIDI file (.mid / .midi)")
-    ],
+    midi_file: Annotated[Path, typer.Argument(help="Input MIDI file (.mid / .midi)")],
     output: Annotated[
         Path | None,
         typer.Option(
@@ -638,9 +639,7 @@ def arrange_guitar(
         if not summaries:
             typer.echo("No note-bearing tracks.", err=True)
             raise typer.Exit(1)
-        typer.echo(
-            f"{'track':>5}  {'channel':>7}  {'notes':>5}  {'program':>7}  name"
-        )
+        typer.echo(f"{'track':>5}  {'channel':>7}  {'notes':>5}  {'program':>7}  name")
         for s in summaries:
             typer.echo(
                 f"{s['track_index']:>5}  {s['channel']:>7}  {s['note_count']:>5}"
@@ -766,8 +765,7 @@ def guitar_musicxml(
         Path | None,
         typer.Option(
             "--output",
-            help="Where to write the MusicXML "
-            "(default: <arrangement-stem>.musicxml).",
+            help="Where to write the MusicXML (default: <arrangement-stem>.musicxml).",
         ),
     ] = None,
 ):
