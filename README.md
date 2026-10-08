@@ -7,6 +7,7 @@
 <p align="center">
   <a href="README.en.md">🇬🇧 English version</a> ·
   <a href="QUICKSTART.md">Быстрый старт</a> ·
+  <a href="docs/README.md">Документация</a> ·
   <a href="https://github.com/leadpioneer/muscriptor-plus/issues/new/choose">Сообщить о баге</a>
 </p>
 
@@ -15,6 +16,7 @@
   <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/OS-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey" alt="OS">
   <img src="https://img.shields.io/badge/GPU-CUDA%20%7C%20Metal-76b900" alt="GPU">
+  <a href="https://github.com/leadpioneer/muscriptor-plus/actions/workflows/ci.yml"><img src="https://github.com/leadpioneer/muscriptor-plus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 **MuScriptor Plus** — расширенный форк [MuScriptor](https://github.com/muscriptor/muscriptor):
@@ -36,6 +38,18 @@
 | Установка | вручную | **мастер `install.bat` (англ. копия — `install_en.bat`) + `start.bat`** |
 
 Основа оригинала не тронута: точность модели, CLI, Python API, форматы.
+
+## Документация
+
+Подробные руководства — в каталоге [`docs/`](docs/README.md):
+
+- [Установка](docs/installation.md) — мастер Windows, ручная установка на всех ОС, модели, кэши, Intel Mac;
+- [CLI](docs/cli.md) — все команды и опции с значениями по умолчанию;
+- [Веб-интерфейс](docs/web-ui.md) — экран загрузки, плеер, скачивания, лаборатория аппликатуры;
+- [HTTP API](docs/api.md) — эндпоинты, SSE-протокол, коды ошибок, конкурентность;
+- [Гитарный аранжировщик](docs/guitar-arranger.md) — алгоритм, фиксации, JSON schema v3;
+- [Архитектура и разработка](docs/architecture.md) — внутреннее устройство, тесты, сборка, Docker;
+- [Диагностика](docs/troubleshooting.md) — решение типичных проблем.
 
 ## Быстрый старт (Windows)
 
@@ -92,6 +106,9 @@ start.bat     :: запуск сервера + открытие веб-инте�
   шапке: новые веса грузятся в фоне, во время транскрипции переключение
   отклоняется, память старой модели освобождается. Веса кешируются.
 - На Apple Silicon модель автоматически работает через Metal (MPS).
+- На Intel Mac нужен Python 3.10–3.12 (torch там привязан к 2.2.2) и
+  недоступно удаление ведущего вокала — см.
+  [docs/installation.md](docs/installation.md#особые-случаи-intel-mac-и-apple-silicon).
 
 ### Память GPU: выгрузка модели
 
@@ -102,8 +119,9 @@ start.bat     :: запуск сервера + открытие веб-инте�
 - **Автоматически** — после 5 минут простоя (по умолчанию; меняется опцией
   `--idle-unload <минуты>` у `serve`, `0` — выключить).
 
-Следующий запрос (транскрипция, смена модели) прозрачно перезагружает модель
-из локального кэша за несколько секунд — без сети. Разделение вокала тоже
+Следующий запрос (транскрипция) прозрачно перезагружает ту же модель из
+локального кэша за несколько секунд — без сети; переключение на модель,
+которой ещё нет в кэше, сначала скачает её веса. Разделение вокала тоже
 освобождает свою память сразу после каждого прогона.
 
 ## Удаление ведущего вокала (opt-in)
@@ -186,7 +204,8 @@ Lock проверяет, что позиция звучит в точности 
 всю фразу — в том числе весь аккорд, в котором нота звучит. Начиная с
 **schema v3** состояние солвера — полная аппликатура: у каждой ноты есть
 `string`, `fret`, **`hand_position`** (лад, напротив которого стоит
-указательный палец), **`finger`** (0 — открытая струна, 1–4 — пальцы),
+указательный палец), **`finger`** (0 — открытая струна, 1–4 — пальцы;
+`null`, если аннотация пальцев получилась неполной),
 `locked` и списки `legal_positions` (string/fret) и `legal_fingerings`
 (полные состояния). Стоимость моделирует кисть, а не лады нот: переходы
 между ладами в одной позиции бесплатны, смена позиции кисти — заметна и
@@ -293,10 +312,19 @@ score/
 ```bash
 uv sync
 cd web && pnpm install && pnpm run build   # только если меняете фронтенд
+uv run pytest                              # герметичные тесты (интеграционные — по MUSCRIPTOR_TEST_*)
+cd web && pnpm test                        # фронтенд-тесты (Node 22.19+)
 ```
+
+CI (GitHub Actions, `.github/workflows/ci.yml`) на каждый push/PR гоняет
+ruff, pytest (включая проверку ссылок в документации), vitest и сборку
+фронтенда.
 
 Для горячего релоада фронтенда: `pnpm dev` в `web/` и
 `uv run muscriptor serve --port 8222` рядом; открывать http://localhost:5173/.
+Vite проксирует все эндпоинты на `BACKEND_URL` (по умолчанию
+`http://127.0.0.1:8222`); `pnpm run dev:proxy` подключает публичный
+демо-бэкенд. Подробнее — [docs/architecture.md](docs/architecture.md#разработка).
 
 ## Баги и предложения
 

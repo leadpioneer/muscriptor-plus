@@ -4,13 +4,14 @@
 
 <h1 align="center">MuScriptor Plus</h1>
 
-<p align="center"><a href="README.md">🇷🇺 Русская версия</a></p>
+<p align="center"><a href="README.md">🇷🇺 Русская версия</a> · <a href="docs/README.md">Documentation (RU)</a></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
   <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/OS-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey" alt="OS">
   <img src="https://img.shields.io/badge/GPU-CUDA%20%7C%20Metal-76b900" alt="GPU">
+  <a href="https://github.com/leadpioneer/muscriptor-plus/actions/workflows/ci.yml"><img src="https://github.com/leadpioneer/muscriptor-plus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 **MuScriptor Plus** is an enhanced fork of [MuScriptor](https://github.com/muscriptor/muscriptor) —
@@ -35,6 +36,19 @@ per-instrument sheet music. The web UI is available in Russian and English.
   wizard and a one-click launcher
 
 Everything else is unchanged: model accuracy, CLI, Python API, output formats.
+
+## Documentation
+
+Detailed guides live in [`docs/`](docs/README.md) (Russian):
+
+- [Installation](docs/installation.md) — the Windows wizard, manual setup on
+  every OS, models, caches, Intel Mac;
+- [CLI](docs/cli.md) — every command and option with defaults;
+- [Web UI](docs/web-ui.md) — upload screen, player, downloads, Guitar Arranger Lab;
+- [HTTP API](docs/api.md) — endpoints, the SSE protocol, error codes, concurrency;
+- [Guitar arranger](docs/guitar-arranger.md) — the algorithm, locks, schema v3;
+- [Architecture & development](docs/architecture.md) — internals, tests, builds, Docker;
+- [Troubleshooting](docs/troubleshooting.md).
 
 ## Quick start (Windows)
 
@@ -79,6 +93,10 @@ Weights are downloaded on first use and cached.
 `small` suits CPU-only machines, `medium` is the speed/accuracy trade-off, and
 `large` is the most accurate but needs a GPU (~12 GB VRAM). The model
 can be switched live in the web UI header; weights are cached after download.
+On Apple Silicon the model runs on Metal (MPS) automatically; on Intel Macs
+Python 3.10–3.12 is required (torch is pinned to 2.2.2 there) and lead-vocal
+removal is unavailable — see
+[docs/installation.md](docs/installation.md#особые-случаи-intel-mac-и-apple-silicon).
 
 ### GPU memory: unloading the model
 
@@ -89,9 +107,10 @@ idle. Two ways to free it:
 - **Automatically** — after 5 minutes of idle time (default; change with the
   `--idle-unload <minutes>` flag of `serve`, `0` disables it).
 
-The next request (a transcription or a model switch) transparently reloads
-the model from the local cache in seconds — no network. Vocal separation
-releases its own memory right after every run.
+The next request (a transcription) transparently reloads the same model from
+the local cache in seconds — no network; switching to a model that isn't
+cached yet downloads its weights first. Vocal separation releases its own
+memory right after every run.
 
 ## Lead-vocal removal (opt-in)
 
@@ -171,7 +190,8 @@ transposes); it leaves that note a single candidate and re-solves the whole
 phrase — including the chord the note sounds in. Since **schema v3** the
 solver's state is a full fingering: every
 note carries `string`, `fret`, **`hand_position`** (the fret the index finger
-sits at), **`finger`** (0 = open string, 1–4 = fingers), `locked` and both
+sits at), **`finger`** (0 = open string, 1–4 = fingers; `null` when the
+annotation came out incomplete), `locked` and both
 `legal_positions` (string/fret) and `legal_fingerings` (full states). The
 cost models the hand, not the notes' frets: moving between frets within one
 hand position is free, a hand shift is visible in the

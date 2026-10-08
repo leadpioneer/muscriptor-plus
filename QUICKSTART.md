@@ -1,5 +1,8 @@
 ﻿# Быстрый старт / Quick start
 
+Подробная документация — в каталоге [`docs/`](docs/README.md)
+(Detailed guides: [`docs/`](docs/README.md)).
+
 ## Русский
 
 ### 1. Что понадобится
@@ -57,6 +60,14 @@ uv run muscriptor transcribe song.mp3   # из командной строки
 - **MuseScore (ноты в PDF)**: [MuseScore 4+](https://musescore.org/en/download) ставится отдельно; стандартные пути установки (`C:\Program Files\MuseScore 4\bin\…`) находятся автоматически, для нестандартного пути задайте `MUSCRIPTOR_MUSESCORE`. Мастер `install.bat` (шаг 9) предложит установить его через winget, если его нет.
 - **FluidSynth (скачивание WAV)**: нужен бинарник `fluidsynth`; удобный способ — официальный [Windows-билд](https://github.com/FluidSynth/fluidsynth/releases), распакованный в `tools/fluidsynth` — `start.bat` добавит его в PATH сам, а мастер проверяет наличие на шаге 9.
 - **ffmpeg (удаление ведущего вокала)**: нужен в PATH; `install.bat` предложит установить через winget (`Gyan.FFmpeg`). Опция включается галочкой на экране загрузки или флагом `--remove-vocals` в CLI; веса модели разделения скачиваются при первом запуске и кешируются.
+
+### 6. Что дальше
+
+- [Установка](docs/installation.md) — все способы, кэши, модели, Intel Mac.
+- [CLI](docs/cli.md) — полный справочник команд и опций.
+- [Веб-интерфейс](docs/web-ui.md) — как пользоваться плеером, нотами и гитарной лабораторией.
+- [HTTP API](docs/api.md) — эндпоинты и SSE-протокол.
+- [Диагностика](docs/troubleshooting.md) — если что-то не работает.
 
 ---
 
@@ -118,3 +129,11 @@ The model can also be switched from the web UI (dropdown in the header); weights
 - **MuseScore (PDF sheet music)**: install [MuseScore 4+](https://musescore.org/en/download) separately; standard install locations (`C:\Program Files\MuseScore 4\bin\…`) are detected automatically, otherwise set `MUSCRIPTOR_MUSESCORE`. The wizard offers to install it via winget when missing (step 9).
 - **FluidSynth (WAV downloads)**: needs a `fluidsynth` binary; the easiest way is the official [Windows build](https://github.com/FluidSynth/fluidsynth/releases) unpacked into `tools/fluidsynth` — `start.bat` adds it to the process PATH for you, and the wizard checks it in step 9.
 - **ffmpeg (lead-vocal removal)**: must be on PATH; `install.bat` offers to install it via winget (`Gyan.FFmpeg`). Enable the option with the checkbox on the upload screen or the `--remove-vocals` CLI flag; separation weights download on first use and are cached.
+
+### 6. Next steps
+
+- [Installation](docs/installation.md) — every setup path, caches, models, Intel Mac.
+- [CLI reference](docs/cli.md) — all commands and options.
+- [Web UI guide](docs/web-ui.md) — player, sheet music, Guitar Arranger Lab.
+- [HTTP API](docs/api.md) — endpoints and the SSE protocol.
+- [Troubleshooting](docs/troubleshooting.md) — when something breaks.
