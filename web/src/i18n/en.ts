@@ -11,7 +11,7 @@ export const EN: Dict = {
 
   // Welcome screen
   welcome_intro:
-    "MuScriptor Plus is a fork of MuScriptor, the best open multi-instrument transcription model to date: it adds a Russian UI, per-instrument volume controls and live model switching. Give it a recording — pop, classical, metal, jazz, whatever — and it transcribes the notes played by every instrument into MIDI and sheet music, for you to download or explore interactively.",
+    "MuScriptor Plus is a fork of MuScriptor, the best open multi-instrument transcription model to date: it adds a Russian UI, per-instrument volume controls, live model switching, lead-vocal removal and a guitar fingering arranger. Give it a recording — pop, classical, metal, jazz, whatever — and it transcribes the notes played by every instrument into MIDI and sheet music, for you to download or explore interactively.",
   drop_audio_here: "Drop an",
   drop_audio_here_strong: "audio file",
   drop_audio_here_tail: "here, or",
@@ -160,6 +160,43 @@ export const EN: Dict = {
     "MuScriptor Plus is an enhanced fork of the MuScriptor transcription model: it turns raw audio into per-instrument MIDI. The model was trained by",
   footer_and: "and",
 
+  // Instrument display names (keys mirror the backend instrument ids)
+  instr_acoustic_piano: "Piano",
+  instr_electric_piano: "Electric piano",
+  instr_chromatic_percussion: "Chromatic percussion",
+  instr_organ: "Organ",
+  instr_acoustic_guitar: "Acoustic guitar",
+  instr_clean_electric_guitar: "Clean electric guitar",
+  instr_distorted_electric_guitar: "Distorted electric guitar",
+  instr_acoustic_bass: "Acoustic bass",
+  instr_electric_bass: "Electric bass",
+  instr_violin: "Violin",
+  instr_viola: "Viola",
+  instr_cello: "Cello",
+  instr_contrabass: "Contrabass",
+  instr_orchestral_harp: "Harp",
+  instr_timpani: "Timpani",
+  instr_string_ensemble: "String ensemble",
+  instr_synth_strings: "Synth strings",
+  instr_voice: "Voice",
+  instr_orchestra_hit: "Orchestra hit",
+  instr_trumpet: "Trumpet",
+  instr_trombone: "Trombone",
+  instr_tuba: "Tuba",
+  instr_french_horn: "French horn",
+  instr_brass_section: "Brass section",
+  instr_soprano_and_alto_sax: "Soprano/alto sax",
+  instr_tenor_sax: "Tenor sax",
+  instr_baritone_sax: "Baritone sax",
+  instr_oboe: "Oboe",
+  instr_english_horn: "English horn",
+  instr_bassoon: "Bassoon",
+  instr_clarinet: "Clarinet",
+  instr_flutes: "Flutes",
+  instr_synth_lead: "Synth lead",
+  instr_synth_pad: "Synth pad",
+  instr_drums: "Drums",
+
   // Guitar Arranger Lab
   guitar_open: "Edit fingering",
   guitar_title: "Guitar Arranger Lab",
@@ -243,7 +280,7 @@ export const EN: Dict = {
 export const FAQ_EN: { q: string; a: string }[] = [
   {
     q: "What is MuScriptor Plus?",
-    a: "MuScriptor Plus is an enhanced fork of [MuScriptor](https://github.com/muscriptor/muscriptor), the multi-instrument transcription model developed by [Kyutai](https://kyutai.org/) and [Mirelo](https://mirelo.ai/): it turns music into MIDI and sheet music — you give it a recording and it transcribes the notes played by every instrument. The fork adds a Russian UI, volume controls, live model switching and Windows fixes.",
+    a: "MuScriptor Plus is an enhanced fork of [MuScriptor](https://github.com/muscriptor/muscriptor), the multi-instrument transcription model developed by [Kyutai](https://kyutai.org/) and [Mirelo](https://mirelo.ai/): it turns music into MIDI and sheet music — you give it a recording and it transcribes the notes played by every instrument. The fork adds a Russian UI, volume controls, live model switching, lead-vocal removal, a guitar fingering arranger and Windows fixes.",
   },
   {
     q: "Is it free to use?",
@@ -263,7 +300,7 @@ export const FAQ_EN: { q: string; a: string }[] = [
   },
   {
     q: "Can it give me guitar tabs?",
-    a: "Yes. Fretted instruments like guitar and bass also yield a tablature PDF, next to the standard notation. Download it from the sheet music menu after transcribing. It does not write chord symbols, only the notes that are actually played.",
+    a: "Yes. Fretted instruments like guitar and bass also yield a tablature PDF, next to the standard notation. Download it from the sheet music menu after transcribing. It does not write chord symbols, only the notes that are actually played. If the suggested fingering doesn't fit, open \"Edit fingering\": the Guitar Arranger Lab lets you pin strings and frets and export MusicXML/PDF that keep them.",
   },
   {
     q: "Can I run it locally or use it from Python?",
