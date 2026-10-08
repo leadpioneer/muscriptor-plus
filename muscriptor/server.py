@@ -55,10 +55,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
-from muscriptor.accelerator import (
-    current_accelerator,
-    is_available as accelerator_available,
-)
+from muscriptor.accelerator import current_accelerator
 from muscriptor.events import NoteEndEvent, NoteStartEvent, ProgressEvent
 from muscriptor.preprocessing import (
     AudioPreprocessor,
@@ -485,7 +482,11 @@ def create_app(
                         run_id,
                         run_dir_,
                         {
-                            **({"vocals": result.vocals_path} if result.vocals_path else {}),
+                            **(
+                                {"vocals": result.vocals_path}
+                                if result.vocals_path
+                                else {}
+                            ),
                             "instrumental": result.instrumental_path,
                         },
                     )
@@ -530,9 +531,17 @@ def create_app(
                     yield _sse({"type": "stage", "stage": "midi"})
                 # Detect tempo/meter only now: it costs a few seconds of CPU and
                 # nothing before this point needs it, so the notes stream first.
-                grid = model.detect_beat_grid_for(
-                    (transcription_wav, sr), detect_tempo
-                )
+                # `detect_tempo=true` is the caller asking to be told when there
+                # is no usable tempo: without this catch the exception would
+                # escape the generator, and the client would see a 200 stream
+                # that just ends — no `error`, no `transcription_complete`.
+                try:
+                    grid = model.detect_beat_grid_for(
+                        (transcription_wav, sr), detect_tempo
+                    )
+                except BeatDetectionError as e:
+                    yield _sse({"type": "error", "detail": str(e)})
+                    return
                 # Measure the onset lag up here rather than leaving it to the MIDI
                 # writing, since the UI has to be told the very same number to move
                 # the notes it already drew.
@@ -862,9 +871,7 @@ def create_app(
         return Response(
             content=midi_bytes,
             media_type="audio/midi",
-            headers={
-                "Content-Disposition": f'attachment; filename="{stem}.mid"'
-            },
+            headers={"Content-Disposition": f'attachment; filename="{stem}.mid"'},
         )
 
     @app.post("/arrange/guitar/tab")
@@ -914,9 +921,7 @@ def create_app(
         return Response(
             content=xml_bytes,
             media_type="application/vnd.recordare.musicxml+xml",
-            headers={
-                "Content-Disposition": f'attachment; filename="{stem}.musicxml"'
-            },
+            headers={"Content-Disposition": f'attachment; filename="{stem}.musicxml"'},
         )
 
     @app.post("/arrange/guitar/pdf")
@@ -986,8 +991,7 @@ def create_app(
                         detail={
                             "code": "fingering_export_failed",
                             "message": (
-                                "MuseScore ran but produced no PDF for this "
-                                "arrangement"
+                                "MuseScore ran but produced no PDF for this arrangement"
                             ),
                             "details": {"stderr": (proc.stderr or "")[-2000:]},
                         },
@@ -1009,9 +1013,7 @@ def create_app(
         return Response(
             content=zip_bytes,
             media_type="application/zip",
-            headers={
-                "Content-Disposition": f'attachment; filename="{stem}_score.zip"'
-            },
+            headers={"Content-Disposition": f'attachment; filename="{stem}_score.zip"'},
         )
 
     @app.post("/sheets")
@@ -1068,9 +1070,7 @@ def create_app(
         return FileResponse(
             path,
             media_type="audio/wav",
-            headers={
-                "Content-Disposition": f'attachment; filename="{stem}.wav"'
-            },
+            headers={"Content-Disposition": f'attachment; filename="{stem}.wav"'},
         )
 
     @app.get("/model")
@@ -1088,8 +1088,9 @@ def create_app(
 
         Runs in a background thread (weights download + load take a while);
         while it runs, transcriptions and further swaps are refused with 409.
-        Requires the server to have been started with a size-keyword model —
-        a server running a local file path can't switch to published sizes.
+        Only a size keyword (small/medium/large) can be selected here; that
+        works whatever the server was started with, including a local file —
+        the loader maps the keyword to the published checkpoint.
         """
         if model_loader is None:
             raise HTTPException(

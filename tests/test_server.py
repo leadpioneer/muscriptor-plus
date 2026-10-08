@@ -20,7 +20,7 @@ import muscriptor.server as server_module
 from muscriptor.events import NoteEndEvent, NoteStartEvent, ProgressEvent
 from muscriptor.server import create_app, event_to_dict
 from muscriptor.transcription_model import TranscriptionModel
-from muscriptor.utils.beats import BeatGrid
+from muscriptor.utils.beats import BeatDetectionError, BeatGrid
 from muscriptor.utils.sheets import MuseScoreError, MuseScoreNotFoundError
 
 FAKE_MIDI = b"FAKE_MIDI_BYTES"
@@ -151,6 +151,31 @@ def test_transcribe_sends_beat_grid(tmp_path):
         # from, so the UI is told to shift its notes by nothing.
         "onset_delay": 0.0,
     }
+
+
+def test_transcribe_reports_beat_detection_failure(tmp_path):
+    """detect_tempo=true must end the stream with an error event, not silently.
+
+    The SSE contract promises a terminal event for every run. Before this was
+    handled, a failed detection escaped the response generator and the client
+    saw a 200 with an empty (or truncated) body and no explanation.
+    """
+    model = make_model()
+    model.detect_beat_grid_for.side_effect = BeatDetectionError("no fixed tempo")
+
+    client = TestClient(create_app(model), raise_server_exceptions=False)
+    resp = client.post(
+        "/transcribe",
+        files={"file": ("silent.wav", _wav_bytes(tmp_path), "audio/wav")},
+        data={"detect_tempo": "true"},
+    )
+
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    assert parsed[-1] == {"type": "error", "detail": "no fixed tempo"}
+    assert all(ev["type"] != "transcription_complete" for ev in parsed)
+    # The failure happened before any note could be assembled.
+    model.events_to_midi_bytes.assert_not_called()
 
 
 def test_transcribe_forwards_progress(tmp_path):
@@ -714,4 +739,3 @@ def test_model_idle_unload_frees_vram_after_the_timeout(tmp_path):
     )
     assert _parse_sse(resp.text)[-1]["type"] == "transcription_complete"
     assert client.get("/model").json()["status"] == "ready"
-
