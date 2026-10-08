@@ -45,6 +45,29 @@ def test_upload_returns_the_arrangement_document():
         assert note["legal_positions"]
 
 
+def test_detuned_part_is_normalized_to_standard_via_api():
+    # Systematic low roots (as on a guitar tuned half a step down): the whole
+    # part is shifted up a semitone, not stripped of its roots one by one.
+    chord = [(39, 0, 480), (46, 0, 480), (51, 0, 480), (55, 0, 480)]
+    eb_part = melody_midi(
+        [(pitch, index * 480, 240) for index in range(12) for pitch, _, _ in chord]
+    )
+    resp = _post(_client(), data=eb_part)
+    assert resp.status_code == 200
+    normalization = resp.json()["normalization"]
+    assert normalization["target_tuning"] == "standard"
+    assert normalization["transposition_semitones"] == 1
+    assert normalization["dropped"] == []
+    assert min(note["pitch"] for note in resp.json()["notes"]) >= 40
+
+
+def test_chord_overflow_error_form_field_gives_422():
+    seven = melody_midi([(pitch, 0, 480) for pitch in (40, 43, 47, 50, 53, 56, 59)])
+    resp = _post(_client(), data=seven, chord_overflow="error")
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["code"] == "too_many_chord_notes"
+
+
 def test_ambiguous_tracks_give_422_with_candidates():
     from mido import Message, MetaMessage
 
@@ -147,6 +170,54 @@ def test_arrangement_to_musicxml_endpoint_returns_fingering_preserving_xml():
     root = ET.fromstring(resp.content)
     assert root.tag == "score-partwise"
     assert len(list(root.iter("technical"))) == 3
+    # No finger digits by default; the detected chord is rendered instead.
+    assert list(root.iter("fingering")) == []
+    assert [h.findtext("kind") for h in root.iter("harmony")] == ["major"]
+
+
+def test_musicxml_endpoint_form_fields_toggle_chords_and_fingerings():
+    import xml.etree.ElementTree as ET
+
+    data = melody_midi([(p, 0, 480) for p in (60, 64, 67)])
+    document = _post(_client(), data=data).json()
+    files = {
+        "document": (
+            "arrangement.json",
+            json.dumps(document).encode(),
+            "application/json",
+        )
+    }
+    off = _client().post(
+        "/arrange/guitar/musicxml",
+        files=files,
+        data={"chords": "false", "fingerings": "true"},
+    )
+    assert off.status_code == 200
+    root = ET.fromstring(off.content)
+    assert list(root.iter("harmony")) == []
+    fingerings = [t.findtext("fingering") for t in root.iter("technical")]
+    assert fingerings and all(f is not None for f in fingerings)
+
+
+def test_arrange_endpoint_reports_detected_chords():
+    progression = melody_midi(
+        [
+            (45, 0, 1920),
+            (52, 0, 1920),
+            (57, 0, 1920),
+            (60, 0, 1920),
+            (40, 1920, 1920),
+            (47, 1920, 1920),
+            (50, 1920, 1920),
+            (56, 1920, 1920),
+        ]
+    )
+    resp = _post(_client(), data=progression)
+    assert resp.status_code == 200
+    assert [(c["tick"], c["label"]) for c in resp.json()["chords"]] == [
+        (0, "Am"),
+        (1920, "E7"),
+    ]
 
 
 def test_arrangement_to_pdf_endpoint_engraves_via_musescore():

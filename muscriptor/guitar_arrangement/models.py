@@ -415,6 +415,65 @@ class AssignedEvent:
 
 
 @dataclass(frozen=True)
+class DroppedNote:
+    """A note the arrangement deliberately left out, with the reason why.
+
+    Reasons: `octave_duplicate` (an out-of-range note whose exact ±12 twin
+    sounds in the same onset event — a transcription artefact removed by the
+    normalization) and `chord_overflow` (an onset with more notes than
+    strings, reduced to a playable subset). Nothing is ever dropped without
+    appearing here and in the arrangement JSON.
+    """
+
+    note_id: str
+    pitch: int
+    onset_ticks: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class Normalization:
+    """What it took to fit the part to the target (standard) tuning.
+
+    `transposition_semitones` is applied to every kept note; `dropped` lists
+    the octave-duplicate notes removed before transposing. Computed by
+    `normalize.normalize_to_tuning`.
+    """
+
+    target_tuning: str
+    source_low_pitch: int | None
+    source_high_pitch: int | None
+    transposition_semitones: int
+    dropped: tuple[DroppedNote, ...]
+
+
+@dataclass(frozen=True)
+class ChordReduction:
+    """One oversized onset reduced to what six strings can actually play."""
+
+    onset_ticks: int
+    note_count: int
+    dropped: tuple[DroppedNote, ...]
+
+
+@dataclass(frozen=True)
+class ChordLabel:
+    """One detected jazz chord symbol.
+
+    `label` is the display name (`Am`, `Cmaj7`, `E7/G#`); `root` and `bass`
+    are pitch-class names, `kind` is the detector's short quality code
+    (`maj`, `m`, `7`, `maj7`, …) that the MusicXML writer maps to a
+    `<kind>` element. `bass` is None when the bass sounds the root.
+    """
+
+    tick: int
+    label: str
+    root: str
+    kind: str
+    bass: str | None = None
+
+
+@dataclass(frozen=True)
 class ArrangementSolution:
     """Everything the JSON serializer needs, no more."""
 
@@ -426,3 +485,12 @@ class ArrangementSolution:
     # Set when the input was reduced to one melodic line before solving
     # (melody policy `top`/`bottom`); None when no reduction ran.
     melody_reduction: MelodyReduction | None = None
+    # Set when the part was fitted to the target tuning before solving
+    # (`normalize=False` skips it and leaves this None).
+    normalization: Normalization | None = None
+    # Oversized onsets that were reduced to a playable subset (empty when no
+    # onset exceeded the string count).
+    chord_reductions: tuple[ChordReduction, ...] = ()
+    # Jazz chord symbols detected over the finished timeline (empty when
+    # detection was disabled).
+    chords: tuple[ChordLabel, ...] = ()

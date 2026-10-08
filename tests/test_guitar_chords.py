@@ -202,9 +202,13 @@ def test_unlock_returns_the_automatic_shape():
 
 
 def test_seven_notes_give_a_structured_error():
-    pitches = (36, 40, 43, 47, 50, 53, 56)
+    pitches = (40, 43, 47, 50, 53, 56, 59)
     with pytest.raises(TooManyChordNotesError) as excinfo:
-        arrange(melody_midi([(p, 0, 480) for p in pitches]), filename="s.mid")
+        arrange(
+            melody_midi([(p, 0, 480) for p in pitches]),
+            filename="s.mid",
+            chord_overflow="error",
+        )
     details = excinfo.value.details
     assert details["onset_ticks"] == 0
     # Pitches come in event order (highest first).
@@ -215,14 +219,49 @@ def test_seven_notes_give_a_structured_error():
     assert all("note:" in nid for nid in details["note_ids"])
 
 
-def test_impossible_unison_gives_unplayable_chord_not_a_dropped_note():
-    # MIDI 40 can only sound on string 6 (fret 0) in standard tuning.
+def test_impossible_unison_is_reduced_by_default_and_errors_on_demand():
+    # MIDI 40 can only sound on string 6 (fret 0) in standard tuning, so two
+    # simultaneous 40s cannot both be played: the default policy keeps one
+    # and reports the duplicate, `error` keeps the structured failure.
+    document = arrange(melody_midi([(40, 0, 480), (40, 0, 480)]), filename="s.mid")
+    assert [note["pitch"] for note in document["notes"]] == [40]
+    reduction = document["chord_reductions"][0]
+    assert reduction["note_count"] == 2
+    assert [d["reason"] for d in reduction["dropped"]] == ["unplayable_chord"]
+
     with pytest.raises(UnplayableChordError) as excinfo:
-        arrange(melody_midi([(40, 0, 480), (40, 0, 480)]), filename="s.mid")
+        arrange(
+            melody_midi([(40, 0, 480), (40, 0, 480)]),
+            filename="s.mid",
+            chord_overflow="error",
+        )
     details = excinfo.value.details
     assert details["pitches"] == [40, 40]
     assert details["available_strings"] == 6
     assert details["reason"]
+
+
+def test_melody_over_chord_with_no_shared_position_is_reduced():
+    # A real-world transcription case: E4/F#4/A4 stacked over F#3/A3 has no
+    # assignment within max_chord_fret_span=3 on six strings. Dropping one
+    # of the doubled pitch classes (F#4) makes it playable.
+    data = melody_midi(
+        [(69, 0, 480), (66, 0, 480), (64, 0, 480), (57, 0, 480), (54, 0, 480)]
+    )
+    document = arrange(data, filename="stack.mid")
+    reduction = document["chord_reductions"][0]
+    assert reduction["note_count"] == 5
+    assert len(reduction["dropped"]) == 1
+    assert reduction["dropped"][0]["reason"] == "unplayable_chord"
+    kept = sorted(note["pitch"] for note in document["notes"])
+    assert len(kept) == 4 and 69 in kept and 54 in kept
+
+    # Deterministic: the same input gives byte-identical documents.
+    again = arrange(data, filename="stack.mid")
+    assert again == document
+
+    with pytest.raises(UnplayableChordError):
+        arrange(data, filename="stack.mid", chord_overflow="error")
 
 
 def test_two_identical_pitches_survive_on_two_strings():
@@ -312,13 +351,14 @@ def test_arrangement_is_byte_stable_v3():
 def test_out_of_range_notes_are_reported_all_at_once():
     from muscriptor.guitar_arrangement import UnplayableNoteError
 
-    # A bass line below the lowest string (like a transcription of a song
-    # with a real bass guitar): the error must list every offender, not
-    # fail on the first one.
+    # With normalization disabled, a bass line below the lowest string (like
+    # a transcription of a song with a real bass guitar) must list every
+    # offender, not fail on the first one.
     with pytest.raises(UnplayableNoteError) as excinfo:
         arrange(
             melody_midi([(37, 0, 240), (39, 240, 240), (64, 480, 240)]),
             filename="s.mid",
+            normalize=False,
         )
     details = excinfo.value.details
     assert details["offender_count"] == 2
@@ -331,6 +371,18 @@ def test_out_of_range_notes_are_reported_all_at_once():
     assert "2 of 3" in text
     assert "40–88" in text
     assert "+12 semitones" in text
+
+
+def test_below_range_line_is_normalized_into_standard_tuning():
+    # The same bass line with the default policy: the smallest shift that
+    # fits every note is applied and reported.
+    document = arrange(
+        melody_midi([(37, 0, 240), (39, 240, 240), (64, 480, 240)]),
+        filename="s.mid",
+    )
+    assert document["normalization"]["transposition_semitones"] == 3
+    assert document["normalization"]["dropped"] == []
+    assert min(note["pitch"] for note in document["notes"]) >= 40
 
 
 def test_melody_top_policy_can_rescue_below_range_notes():

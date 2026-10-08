@@ -8,6 +8,15 @@ chosen string/fret of every note:
 so an engraver (MuseScore) can render the exact tab the arranger chose —
 user locks included — instead of re-guessing a tab from pitches.
 
+Two display options (both default to what the Guitar Arranger Lab wants):
+
+- `chords=True` renders the document's detected jazz chord symbols as
+  `<harmony>` elements above the staff, so the score shows `Am7`, `E7/G#`, …
+  instead of bare numbers;
+- `fingerings=False` omits `<fingering>` (left-hand finger numbers, 0–4),
+  which would otherwise clutter the notation staff. String/fret stay, so the
+  tab still reproduces the chosen positions exactly.
+
 Design decisions (documented, deterministic):
 - `divisions` == the source `ticks_per_beat`, so `<duration>` values are the
   original ticks verbatim; nothing is requantized.
@@ -35,6 +44,34 @@ from .errors import InvalidArrangementError, UnsupportedArrangementError
 
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
 PITCH_STEPS = ("C", "D", "E", "F", "G", "A", "B")
+
+# Detector quality codes → MusicXML <kind> plus added degrees
+# (degree-value, degree-alter, degree-type).
+_HARMONY_KINDS = {
+    "maj": ("major", ()),
+    "m": ("minor", ()),
+    "7": ("dominant", ()),
+    "maj7": ("major-seventh", ()),
+    "m7": ("minor-seventh", ()),
+    "6": ("major-sixth", ()),
+    "m6": ("minor-sixth", ()),
+    "dim": ("diminished", ()),
+    "dim7": ("diminished-seventh", ()),
+    "m7b5": ("half-diminished", ()),
+    "sus2": ("suspended-second", ()),
+    "sus4": ("suspended-fourth", ()),
+    "add9": ("major", ((9, 0, "add"),)),
+    "madd9": ("minor", ((9, 0, "add"),)),
+}
+
+
+def _name_to_step_alter(name: str) -> tuple[str, int]:
+    """`"Bb"` → `("B", -1)`; raises for anything else."""
+    suffix = name[1:]
+    if not name or name[0] not in "ABCDEFG" or suffix not in ("", "#", "b"):
+        raise InvalidArrangementError(f"bad chord tone name {name!r}")
+    alter = 1 if suffix == "#" else (-1 if suffix == "b" else 0)
+    return name[0], alter
 
 
 def _pitch_to_step_alter_octave(pitch: int) -> tuple[str, int, int]:
@@ -201,6 +238,44 @@ def _measure_boundaries(source: dict, ticks_per_beat: int, total_ticks: int):
     return boundaries
 
 
+def _add_harmony(measure, chord: dict) -> None:
+    """One `<harmony>` chord symbol (rendered above the staff by MuseScore)."""
+    root_name = chord.get("root")
+    kind_code = chord.get("kind")
+    if not isinstance(root_name, str) or not isinstance(kind_code, str):
+        raise InvalidArrangementError(
+            f"chord at tick {chord.get('tick')!r}: 'root' and 'kind' are required"
+        )
+    kind_name, degrees = _HARMONY_KINDS.get(kind_code, (None, ()))
+    if kind_name is None:
+        raise InvalidArrangementError(
+            f"chord at tick {chord.get('tick')!r}: unknown kind {kind_code!r}"
+        )
+    harmony = ET.SubElement(measure, "harmony", {"placement": "above"})
+    root = ET.SubElement(harmony, "root")
+    step, alter = _name_to_step_alter(root_name)
+    ET.SubElement(root, "root-step").text = step
+    if alter:
+        ET.SubElement(root, "root-alter").text = str(alter)
+    ET.SubElement(harmony, "kind").text = kind_name
+    for value, degree_alter, degree_type in degrees:
+        degree = ET.SubElement(harmony, "degree")
+        ET.SubElement(degree, "degree-value").text = str(value)
+        ET.SubElement(degree, "degree-alter").text = str(degree_alter)
+        ET.SubElement(degree, "degree-type").text = degree_type
+    bass_name = chord.get("bass")
+    if bass_name is not None:
+        if not isinstance(bass_name, str):
+            raise InvalidArrangementError(
+                f"chord at tick {chord.get('tick')!r}: 'bass' must be a string or null"
+            )
+        bass = ET.SubElement(harmony, "bass")
+        step, alter = _name_to_step_alter(bass_name)
+        ET.SubElement(bass, "bass-step").text = step
+        if alter:
+            ET.SubElement(bass, "bass-alter").text = str(alter)
+
+
 def _add_note(
     parent,
     member,
@@ -210,6 +285,7 @@ def _add_note(
     tie_start,
     tie_stop,
     divisions,
+    fingerings,
 ):
     note = ET.SubElement(parent, "note")
     if chord:
@@ -239,7 +315,7 @@ def _add_note(
     if tie_stop:
         ET.SubElement(notations, "tied", {"type": "stop"})
     technical = ET.SubElement(notations, "technical")
-    if member.get("finger") is not None:
+    if fingerings and member.get("finger") is not None:
         ET.SubElement(technical, "fingering").text = str(member["finger"])
     ET.SubElement(technical, "string").text = str(member["string"])
     ET.SubElement(technical, "fret").text = str(member["fret"])
@@ -274,8 +350,10 @@ def _add_measure_content(
     tempos,
     ticks_per_beat,
     open_pitches,
+    harmonies,
+    fingerings,
 ):
-    """Attributes, tempo directions and all voices of one measure."""
+    """Attributes, tempo directions, chord symbols and all voices."""
     needs_attributes = measure_number == 1
     if (numerator, denominator) != previous_meter:
         needs_attributes = True
@@ -335,6 +413,20 @@ def _add_measure_content(
         if unit.onset < measure_end and unit.offset > measure_start
     ]
     voices = sorted({unit.voice for unit in measure_units})
+    # Chord symbols of this measure are emitted in voice 1 as the cursor
+    # passes their tick, so MuseScore places them at the right beat. A
+    # chord whose tick falls inside a sustained note waits for the next
+    # note/rest — an acceptable approximation given that chord changes
+    # practically always coincide with an attack.
+    pending = list(harmonies)
+    emitted = 0
+
+    def flush_harmonies(up_to: int) -> None:
+        nonlocal emitted
+        while emitted < len(pending) and pending[emitted].get("tick", 0) <= up_to:
+            _add_harmony(measure, pending[emitted])
+            emitted += 1
+
     # MusicXML measure cursor: notes advance it by their duration ONCE per
     # chord (chord members share the onset), backup rewinds it. The cursor
     # is tracked explicitly here — never summed from the DOM — so the
@@ -344,6 +436,8 @@ def _add_measure_content(
         if voice_index > 0 and previous_written > 0:
             ET.SubElement(measure, "backup").text = str(previous_written)
         cursor = measure_start
+        if voice_index == 0:
+            flush_harmonies(cursor)
         for unit in sorted(
             (u for u in measure_units if u.voice == voice),
             key=lambda u: u.onset,
@@ -359,6 +453,8 @@ def _add_measure_content(
             if not members:
                 continue
             if segment_onset > cursor:
+                if voice_index == 0:
+                    flush_harmonies(segment_onset)
                 _add_rest(
                     measure,
                     segment_onset - cursor,
@@ -369,6 +465,8 @@ def _add_measure_content(
                     ),
                 )
                 cursor = segment_onset
+            if voice_index == 0:
+                flush_harmonies(segment_onset)
             # Every member of one unit shares onset and offset, so every
             # chord member gets the same duration and the chord advances
             # the cursor exactly once.
@@ -383,9 +481,12 @@ def _add_measure_content(
                     tie_start=member["offset_ticks"] > measure_end,
                     tie_stop=unit.onset < measure_start,
                     divisions=ticks_per_beat,
+                    fingerings=fingerings,
                 )
             cursor = max(cursor, segment_onset + duration)
         if cursor < measure_end:
+            if voice_index == 0:
+                flush_harmonies(measure_end)
             _add_rest(
                 measure,
                 measure_end - cursor,
@@ -397,9 +498,17 @@ def _add_measure_content(
         previous_written = cursor - measure_start
 
 
-def arrangement_json_to_musicxml(document) -> bytes:
+def arrangement_json_to_musicxml(
+    document, *, fingerings: bool = False, chords: bool = True
+) -> bytes:
     """Serialize a schema-v2/v3 arrangement into fingering-preserving
-    MusicXML (bytes, UTF-8, deterministic)."""
+    MusicXML (bytes, UTF-8, deterministic).
+
+    `chords=False` skips the document's `chords` block (no `<harmony>`);
+    `fingerings=True` writes the left-hand finger numbers into
+    `<technical><fingering>` (off by default: they clutter the staff, while
+    string/fret already pin the tab positions).
+    """
     document, notes = parse_document(document)
     source = document["source"]
     ticks_per_beat = source.get("ticks_per_beat")
@@ -410,6 +519,18 @@ def arrangement_json_to_musicxml(document) -> bytes:
     units = _color_units(notes)
     boundaries = _measure_boundaries(source, ticks_per_beat, total_ticks)
     tempos = sorted(source.get("tempo_events") or [], key=lambda e: e.get("tick", 0))
+    harmony_events: list[dict] = []
+    if chords:
+        raw_chords = document.get("chords") or []
+        if not isinstance(raw_chords, list):
+            raise InvalidArrangementError("'chords' must be a list")
+        for index, chord in enumerate(raw_chords):
+            if not isinstance(chord, dict) or not isinstance(chord.get("tick"), int):
+                raise InvalidArrangementError(
+                    f"chord #{index}: an object with an integer 'tick' is required"
+                )
+            harmony_events.append(chord)
+        harmony_events.sort(key=lambda c: c["tick"])
 
     root = ET.Element("score-partwise", {"version": "4.0"})
     part_list = ET.SubElement(root, "part-list")
@@ -428,6 +549,11 @@ def arrangement_json_to_musicxml(document) -> bytes:
         previous_meter = (
             boundaries[measure_number - 2][1:3] if measure_number >= 2 else None
         )
+        measure_harmonies = [
+            chord
+            for chord in harmony_events
+            if measure_start <= chord["tick"] < measure_end
+        ]
         measure = ET.SubElement(part, "measure", {"number": str(measure_number)})
         _add_measure_content(
             measure,
@@ -441,6 +567,8 @@ def arrangement_json_to_musicxml(document) -> bytes:
             tempos,
             ticks_per_beat,
             open_pitches,
+            measure_harmonies,
+            fingerings,
         )
 
     ET.indent(root, space="  ")

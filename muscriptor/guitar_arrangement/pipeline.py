@@ -5,6 +5,7 @@ from disk itself (bytes in, dict out) and knows nothing about FastAPI or
 Typer, so the whole flow stays testable without either.
 """
 
+from .chords import choose_playable_subset
 from .errors import (
     InvalidMelodyPolicyError,
     InvalidOverridesError,
@@ -12,9 +13,20 @@ from .errors import (
 )
 from .events import analyze_polyphony, group_into_events
 from .fretboard import resolve_tuning
+from .harmony import detect_chord_labels
 from .melody import reduce_to_melody
 from .midi_input import parse_midi, select_notes
-from .models import ArrangementSolution, FretPosition, SolverConfig, SourceInfo
+from .models import (
+    ArrangementSolution,
+    ChordReduction,
+    DroppedNote,
+    FretPosition,
+    GuitarTuning,
+    NoteEvent,
+    SolverConfig,
+    SourceInfo,
+)
+from .normalize import normalize_to_tuning
 from .phrases import split_event_phrases
 from .serialization import parse_overrides, solution_to_dict
 from .solver import solve_event_phrases
@@ -31,6 +43,9 @@ def arrange(
     phrase_gap_beats: float = 1.0,
     melody_policy: str = "off",
     overrides_text: str | None = None,
+    normalize: bool = True,
+    chord_overflow: str = "reduce",
+    detect_chords: bool = True,
     config: SolverConfig | None = None,
 ) -> dict:
     """Arrange and serialize in one call (the HTTP endpoint's entry point)."""
@@ -45,6 +60,9 @@ def arrange(
             phrase_gap_beats=phrase_gap_beats,
             melody_policy=melody_policy,
             overrides_text=overrides_text,
+            normalize=normalize,
+            chord_overflow=chord_overflow,
+            detect_chords=detect_chords,
             config=config,
         )
     )
@@ -61,18 +79,31 @@ def arrange_solution(
     phrase_gap_beats: float = 1.0,
     melody_policy: str = "off",
     overrides_text: str | None = None,
+    normalize: bool = True,
+    chord_overflow: str = "reduce",
+    detect_chords: bool = True,
     config: SolverConfig | None = None,
 ) -> ArrangementSolution:
-    """Parse, select, reduce, group, phrase, lock and solve.
+    """Parse, select, normalize, reduce, group, phrase, lock and solve.
 
     Since v3 the solver works on onset events (1–6 simultaneous notes); the
-    default melody policy `off` keeps every note and no longer rejects
+    default melody policy `off` keeps every note and does not reject
     polyphonic onsets — that is the whole point of the chord solver. `top`/
     `bottom` remain explicit monophonic reductions. Returns the full solution
     object (the CLI needs phrase internals for `--explain`); serialization
     happens on top. Raises a `GuitarArrangementError` subclass for every
     unsupported or contradictory input — nothing is ever handled by a silent
     fallback.
+
+    `normalize` (default on) fits the part to the target tuning first: the
+    whole part may be transposed and out-of-range octave duplicates removed,
+    both reported in the document's `normalization` block. `chord_overflow`
+    selects what to do with onsets that cannot be played in full (more notes
+    than strings, or no mutually compatible fingering): `reduce` (default)
+    keeps the best playable subset and reports it in `chord_reductions`,
+    `error` leaves the event to the solver's structured failure.
+    `detect_chords` (default on) runs jazz chord-symbol detection over the
+    finished timeline and records the labels in the `chords` block.
     """
     if melody_policy not in ("off", "top", "bottom"):
         raise InvalidMelodyPolicyError(
@@ -87,12 +118,23 @@ def arrange_solution(
     notes = selected.notes
     if melody_policy != "off":
         notes, reduction = reduce_to_melody(notes, melody_policy)
+    normalization = None
+    if normalize:
+        notes, normalization = normalize_to_tuning(notes, tuning, config)
+    # Range first: a note outside the fretboard stays a plain error (or is
+    # dealt with by normalization above) — the chord repair below must never
+    # drop it as if the event were merely unplayable.
+    _validate_fretboard_range(notes, tuning, config)
     events = group_into_events(notes)
-    # The structural too-many-notes error (7+ notes on one onset) outranks
-    # the range check: it fires first in the solver, so the pre-validation
-    # must not mask it.
-    if all(len(event.notes) <= tuning.string_count for event in events):
-        _validate_fretboard_range(notes, tuning, config)
+    chord_reductions: tuple[ChordReduction, ...] = ()
+    if chord_overflow == "reduce":
+        events, chord_reductions = _repair_chord_events(events, tuning, config)
+        notes = tuple(note for event in events for note in event.notes)
+    chords = ()
+    if detect_chords:
+        chords = detect_chord_labels(
+            notes, parsed.ticks_per_beat, parsed.time_signature_events
+        )
     polyphony = analyze_polyphony(events)
     event_phrases = split_event_phrases(
         events, parsed.ticks_per_beat, config.phrase_gap_beats
@@ -118,17 +160,61 @@ def arrange_solution(
         ),
         polyphony=polyphony,
         melody_reduction=reduction,
+        normalization=normalization,
+        chord_reductions=chord_reductions,
+        chords=chords,
     )
+
+
+def _repair_chord_events(
+    events: tuple[NoteEvent, ...], tuning: GuitarTuning, config: SolverConfig
+) -> tuple[tuple[NoteEvent, ...], tuple[ChordReduction, ...]]:
+    """Make every onset fully playable, or reduce it to its best subset.
+
+    Two failure shapes are handled, both reported in `chord_reductions`:
+    onsets with more notes than strings (`chord_overflow`) and onsets that
+    fit the string count but have no mutually compatible fingering, e.g. a
+    melody note stacked over a chord with no shared position
+    (`unplayable_chord`). Events with no playable subset at all are left
+    untouched: the solver then raises its structured error with the full
+    event context instead of this stage pretending to know better.
+    """
+    repaired: list[NoteEvent] = []
+    reports: list[ChordReduction] = []
+    for event in events:
+        subset = choose_playable_subset(event, tuning, config)
+        if subset is None or len(subset) == len(event.notes):
+            repaired.append(event)
+            continue
+        kept_ids = {note.id for note in subset}
+        dropped = [note for note in event.notes if note.id not in kept_ids]
+        reason = (
+            "chord_overflow"
+            if len(event.notes) > tuning.string_count
+            else "unplayable_chord"
+        )
+        repaired.append(NoteEvent(event.index, event.onset_ticks, tuple(subset)))
+        reports.append(
+            ChordReduction(
+                onset_ticks=event.onset_ticks,
+                note_count=len(event.notes),
+                dropped=tuple(
+                    DroppedNote(note.id, note.pitch, note.onset_ticks, reason)
+                    for note in dropped
+                ),
+            )
+        )
+    return tuple(repaired), tuple(reports)
 
 
 def _validate_fretboard_range(notes: tuple, tuning, config: SolverConfig) -> None:
     """Refuse out-of-range notes once, with the full picture.
 
-    Transcriptions often carry a real bass line below the lowest string.
-    Failing on the first such note (the old behaviour) hid the scale of the
-    problem, so every offender is collected and reported in one error:
-    the count, the distinct pitches and a sample of ticks. Nothing is ever
-    transposed or dropped to make the input fit.
+    Runs after normalization (and after any chord-overflow reduction), so
+    whatever still lands here could not be fitted by any shift and has no
+    in-range octave twin to make it redundant. Every offender is collected
+    and reported in one error: the count, the distinct pitches and a sample
+    of ticks. This check itself never transposes or drops anything.
     """
     if not notes:
         return
@@ -146,10 +232,10 @@ def _validate_fretboard_range(notes: tuple, tuning, config: SolverConfig) -> Non
         f"{len(offenders)} of {len(notes)} notes lie outside the fretboard: "
         f"the tuned strings cover MIDI {low}–{high} "
         f"(max_fret={config.max_fret}); offending pitches {pitches}; "
-        f"first offenders: {sample}{more}. Octave transposition is never "
-        "applied automatically — transpose the track (e.g. +12 semitones), "
-        "extract the melody (top/bottom policy), or use a tuning that "
-        "reaches these notes",
+        f"first offenders: {sample}{more}. This check never transposes or "
+        "drops anything itself: transpose the track manually "
+        "(e.g. +12 semitones), extract the melody (top/bottom policy), or "
+        "pick a part that fits the standard tuning",
         pitch=offenders[0].pitch,
         low_pitch=low,
         high_pitch=high,

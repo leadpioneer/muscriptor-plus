@@ -3,13 +3,17 @@
 For one `NoteEvent` this module produces every playable `ChordFingeringState`:
 each note of the event is assigned a distinct string whose open pitch plus
 fret sounds exactly the note's original pitch, then hand positions and finger
-annotations (with barres) are attached. Nothing is ever dropped, transposed
-or arpeggiated — if no full assignment exists, the failure is a structured
-error, not a reduced chord.
+annotations (with barres) are attached. A full assignment either exists or the
+failure is a structured error, not a silently reduced chord; the one explicit
+exception is `choose_playable_subset`, used by the pipeline's
+`chord_overflow="reduce"` mode for onsets that cannot be played in full
+(more notes than strings, or no mutually compatible fingering).
 
 Pure function module: no files, no network, no FastAPI.
 """
 
+from dataclasses import replace
+from itertools import combinations
 from typing import Iterator
 
 from .errors import (
@@ -24,6 +28,7 @@ from .models import (
     ChordNoteState,
     FretPosition,
     GuitarTuning,
+    MidiNote,
     NoteEvent,
     SolverConfig,
 )
@@ -31,6 +36,47 @@ from .models import (
 # Upper bound on finger-annotation variants inspected per (shape, position);
 # the raw space is ≤4^6 but the cap makes the worst case provably bounded.
 _MAX_FINGER_VARIANTS = 16
+
+
+def choose_playable_subset(
+    event: NoteEvent, tuning: GuitarTuning, config: SolverConfig
+) -> tuple[MidiNote, ...] | None:
+    """Pick the largest playable subset of an onset.
+
+    Sizes are tried from the full event down to a single note. Subsets are
+    ranked deterministically: more distinct pitch classes first (losing a
+    whole chord tone is worse than losing a doubling), then keeping the
+    highest note (the melody) and the lowest one (the bass), then the
+    smallest register spread, then the note ids. The first subset the regular
+    candidate generator accepts wins — so a returned subset is always
+    actually playable — and `None` means not even one note could be placed
+    (the caller leaves the event to the structured range/chord errors).
+
+    Note that the solver assigns strings itself — this only decides *which*
+    notes the arrangement is allowed to keep, never their pitches.
+    """
+    ordered = tuple(sorted(event.notes, key=lambda n: (-n.pitch, n.id)))
+    limit = min(len(ordered), tuning.string_count)
+
+    def rank(combo: tuple[MidiNote, ...]) -> tuple:
+        classes = len({note.pitch % 12 for note in combo})
+        extremes = int(combo[0] is ordered[0]) + int(combo[-1] is ordered[-1])
+        spread = max(note.pitch for note in combo) - min(note.pitch for note in combo)
+        return (-classes, -extremes, spread, tuple(note.id for note in combo))
+
+    for size in range(limit, 0, -1):
+        for combo in sorted(combinations(ordered, size), key=rank):
+            probe = replace(event, notes=combo)
+            try:
+                generate_chord_shapes(probe, tuning, config)
+            except (
+                TooManyChordNotesError,
+                UnplayableChordError,
+                IncompatibleChordLocksError,
+            ):
+                continue
+            return combo
+    return None
 
 
 def generate_chord_shapes(

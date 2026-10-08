@@ -48,7 +48,7 @@ import uuid
 import wave
 import zipfile
 from pathlib import Path
-from typing import Annotated, Callable
+from typing import Annotated, Callable, Literal
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -779,8 +779,11 @@ def create_app(
         phrase_gap_beats: Annotated[float, Form()] = 1.0,
         melody: Annotated[str, Form()] = "off",
         overrides: Annotated[str | None, Form()] = None,
+        normalize: Annotated[bool, Form()] = True,
+        chord_overflow: Annotated[Literal["reduce", "error"], Form()] = "reduce",
+        chords: Annotated[bool, Form()] = True,
     ) -> dict:
-        """Arrange one monophonic MIDI track for guitar (string/fret per note).
+        """Arrange one MIDI track for guitar (string/fret per note).
 
         A thin wrapper around the pure `muscriptor.guitar_arrangement`
         pipeline: no transcription model, no MuseScore, no audio. Returns the
@@ -791,6 +794,13 @@ def create_app(
         deterministic monophonic reduction (`top` = keep the highest note of
         every simultaneous onset group, `bottom` = the lowest) so real-world
         polyphonic tracks can still be arranged as one melodic line.
+        `normalize` (default on) fits the part to the standard tuning first
+        (transposition and octave-duplicate removal, reported in the
+        document); `chord_overflow` decides what happens to onsets that
+        cannot be played in full (more notes than strings, or no mutually
+        compatible fingering): `reduce` (default) keeps the best playable
+        subset and reports it in `chord_reductions`, `error` returns the
+        structured failure.
         """
         from muscriptor.guitar_arrangement import (
             GuitarArrangementError,
@@ -812,6 +822,9 @@ def create_app(
                 phrase_gap_beats=phrase_gap_beats,
                 melody_policy=melody,
                 overrides_text=overrides,
+                normalize=normalize,
+                chord_overflow=chord_overflow,
+                detect_chords=chords,
             )
         except GuitarArrangementError as e:
             status = (
@@ -897,12 +910,17 @@ def create_app(
     @app.post("/arrange/guitar/musicxml")
     async def arrangement_to_musicxml(
         document: Annotated[UploadFile, File()],
+        chords: Annotated[bool, Form()] = True,
+        fingerings: Annotated[bool, Form()] = False,
     ) -> Response:
         """Convert an arrangement.json into fingering-preserving MusicXML.
 
         Every note carries `<technical><string>/<fret></technical>`, so an
         engraver renders the exact tab the arranger (or the user's locks)
-        chose — unlike MIDI, which never stores string/fret.
+        chose — unlike MIDI, which never stores string/fret. Detected jazz
+        chord symbols are written as `<harmony>` above the staff
+        (`chords=true`, default); left-hand finger numbers are omitted
+        unless `fingerings=true`.
         """
         from muscriptor.guitar_arrangement import (
             GuitarArrangementError,
@@ -911,7 +929,9 @@ def create_app(
 
         document_dict = await _arrangement_upload(document, 400)
         try:
-            xml_bytes = arrangement_json_to_musicxml(document_dict)
+            xml_bytes = arrangement_json_to_musicxml(
+                document_dict, chords=chords, fingerings=fingerings
+            )
         except GuitarArrangementError as e:
             raise HTTPException(
                 status_code=400,
@@ -927,6 +947,8 @@ def create_app(
     @app.post("/arrange/guitar/pdf")
     async def arrangement_to_pdf(
         document: Annotated[UploadFile, File()],
+        chords: Annotated[bool, Form()] = True,
+        fingerings: Annotated[bool, Form()] = False,
     ) -> Response:
         """Engrave an arrangement.json into a score+tab PDF that provably
         keeps the chosen string/fret.
@@ -934,8 +956,11 @@ def create_app(
         Pipeline: arrangement → MusicXML (with `<technical>` string/fret) →
         MuseScore 4 → PDF. The MusicXML round trip is covered by a test that
         verifies MuseScore preserves the technical positions, so the PDF
-        matches the arrangement JSON. Returns a zip with the PDF and the
-        intermediate MusicXML. 503 when MuseScore is not installed.
+        matches the arrangement JSON. Jazz chord symbols from the document's
+        `chords` block are rendered above the staff by default
+        (`chords=false` to omit); left-hand finger numbers stay out unless
+        `fingerings=true`. Returns a zip with the PDF and the intermediate
+        MusicXML. 503 when MuseScore is not installed.
         """
         import subprocess
         import tempfile
@@ -954,7 +979,9 @@ def create_app(
 
         document_dict = await _arrangement_upload(document, 400)
         try:
-            xml_bytes = arrangement_json_to_musicxml(document_dict)
+            xml_bytes = arrangement_json_to_musicxml(
+                document_dict, chords=chords, fingerings=fingerings
+            )
         except GuitarArrangementError as e:
             raise HTTPException(
                 status_code=400,

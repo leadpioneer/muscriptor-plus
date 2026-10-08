@@ -52,6 +52,11 @@ class OutputFormat(str, Enum):
     sheets = "sheets"
 
 
+class ChordOverflow(str, Enum):
+    reduce = "reduce"
+    error = "error"
+
+
 def _transcribe(model, kwargs: dict, detect_tempo: str, quantize: bool = False):
     """transcribe_and_postprocess, with the CLI's --detect-tempo spelling and errors."""
     try:
@@ -602,6 +607,42 @@ def arrange_guitar(
             '({"version": 1, "locks": [{"note_id": …, "string": …, "fret": …}]}).',
         ),
     ] = None,
+    normalize: Annotated[
+        bool,
+        typer.Option(
+            "--normalize/--no-normalize",
+            help=(
+                "Fit the part to the standard tuning first: transpose it by "
+                "the smallest offset that makes it playable and remove "
+                "out-of-range octave duplicates (both reported in the JSON "
+                "document). --no-normalize makes out-of-range notes a plain "
+                "error."
+            ),
+        ),
+    ] = True,
+    chord_overflow: Annotated[
+        ChordOverflow,
+        typer.Option(
+            "--chord-overflow",
+            help=(
+                "What to do with onsets that cannot be played in full (more "
+                "notes than strings, or no mutually compatible fingering): "
+                "reduce (default) keeps the best playable subset and reports "
+                "it in chord_reductions, error returns the structured error."
+            ),
+        ),
+    ] = ChordOverflow.reduce,
+    chords: Annotated[
+        bool,
+        typer.Option(
+            "--chords/--no-chords",
+            help=(
+                "Detect jazz chord symbols over the finished timeline and "
+                "record them in the document's chords block (default: on); "
+                "the MusicXML and PDF exports render them above the staff."
+            ),
+        ),
+    ] = True,
     explain: Annotated[
         bool,
         typer.Option(
@@ -667,6 +708,9 @@ def arrange_guitar(
             phrase_gap_beats=phrase_gap_beats,
             melody_policy=melody,
             overrides_text=overrides_text,
+            normalize=normalize,
+            chord_overflow=chord_overflow.value,
+            detect_chords=chords,
         )
     except GuitarArrangementError as e:
         typer.echo(f"Error: {e}", err=True)
@@ -689,6 +733,22 @@ def _explain_phrases(solution) -> None:
     """--explain: polyphony overview plus per-phrase/event summary on stderr."""
     from muscriptor.guitar_arrangement import explain_chord_lines
 
+    normalization = solution.normalization
+    if normalization is not None and (
+        normalization.transposition_semitones or normalization.dropped
+    ):
+        typer.echo(
+            f"Normalized to {normalization.target_tuning}: "
+            f"{normalization.transposition_semitones:+d} semitones, "
+            f"dropped {len(normalization.dropped)} octave duplicate(s)",
+            err=True,
+        )
+    for reduction in solution.chord_reductions:
+        typer.echo(
+            f"Reduced onset at tick {reduction.onset_ticks}: "
+            f"{reduction.note_count} notes -> dropped {len(reduction.dropped)}",
+            err=True,
+        )
     for line in explain_chord_lines(solution):
         typer.echo(line, err=True)
 
@@ -768,12 +828,31 @@ def guitar_musicxml(
             help="Where to write the MusicXML (default: <arrangement-stem>.musicxml).",
         ),
     ] = None,
+    chords: Annotated[
+        bool,
+        typer.Option(
+            "--chords/--no-chords",
+            help="Write the document's detected jazz chord symbols as "
+            "<harmony> elements above the staff (default: on).",
+        ),
+    ] = True,
+    fingerings: Annotated[
+        bool,
+        typer.Option(
+            "--fingerings/--no-fingerings",
+            help="Write left-hand finger numbers (<fingering>). Off by "
+            "default: they clutter the staff, and string/fret already pin "
+            "the tab positions.",
+        ),
+    ] = False,
 ):
     """Convert an arrangement.json into fingering-preserving MusicXML.
 
     Every note carries <technical><string>/<fret></technical>, so MuseScore
     (or any engraver) renders the exact tab the arranger chose — user locks
-    included. This, not the MIDI export, is the path to a faithful PDF.
+    included. Detected chord symbols are written as <harmony> above the
+    staff; finger numbers are omitted by default. This, not the MIDI export,
+    is the path to a faithful PDF.
     """
     import json
 
@@ -792,7 +871,9 @@ def guitar_musicxml(
         raise typer.Exit(1)
 
     try:
-        xml_bytes = arrangement_json_to_musicxml(document)
+        xml_bytes = arrangement_json_to_musicxml(
+            document, fingerings=fingerings, chords=chords
+        )
     except GuitarArrangementError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)

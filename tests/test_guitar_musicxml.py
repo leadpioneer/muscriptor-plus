@@ -103,10 +103,17 @@ def test_f_major_locked_positions_carry_into_the_xml():
         ("5", "3"),
         ("6", "1"),
     ]
-    # Fingers are annotated where the allocator knows them.
+    # Finger numbers are off by default (they clutter the staff); with
+    # `fingerings=True` every annotated note carries them.
+    technicals = list(
+        ET.fromstring(arrangement_json_to_musicxml(document)).iter("technical")
+    )
+    assert all(t.find("fingering") is None for t in technicals)
     fingerings = [
         t.findtext("fingering")
-        for t in ET.fromstring(arrangement_json_to_musicxml(document)).iter("technical")
+        for t in ET.fromstring(
+            arrangement_json_to_musicxml(document, fingerings=True)
+        ).iter("technical")
     ]
     assert all(f is not None for f in fingerings)
 

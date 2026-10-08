@@ -29,6 +29,25 @@ SCHEMA_VERSION = 3
 OVERRIDES_VERSION = 1
 
 
+def _dropped_note_to_dict(dropped) -> dict:
+    return {
+        "note_id": dropped.note_id,
+        "pitch": dropped.pitch,
+        "onset_ticks": dropped.onset_ticks,
+        "reason": dropped.reason,
+    }
+
+
+def _normalization_to_dict(normalization) -> dict:
+    return {
+        "target_tuning": normalization.target_tuning,
+        "transposition_semitones": normalization.transposition_semitones,
+        "source_low_pitch": normalization.source_low_pitch,
+        "source_high_pitch": normalization.source_high_pitch,
+        "dropped": [_dropped_note_to_dict(d) for d in normalization.dropped],
+    }
+
+
 def _event_to_dict(assigned_event, phrase_index: int) -> dict:
     """One onset event of the v3 document."""
     state = assigned_event.state
@@ -178,6 +197,36 @@ def solution_to_dict(solution: ArrangementSolution) -> dict:
             "max_fret": solution.config.max_fret,
             "max_hand_position": solution.config.hand_position_limit,
         },
+        # How the part was fitted to the target tuning: a global
+        # transposition and/or octave duplicates removed. `null` only when
+        # normalization was explicitly disabled.
+        "normalization": (
+            _normalization_to_dict(solution.normalization)
+            if solution.normalization is not None
+            else None
+        ),
+        # Oversized onsets reduced to a playable subset (chord_overflow
+        # "reduce"); empty when nothing was reduced.
+        "chord_reductions": [
+            {
+                "onset_ticks": reduction.onset_ticks,
+                "note_count": reduction.note_count,
+                "dropped": [_dropped_note_to_dict(d) for d in reduction.dropped],
+            }
+            for reduction in solution.chord_reductions
+        ],
+        # Jazz chord symbols over the finished timeline (empty when detection
+        # was disabled). Derived data: labels never change the notes.
+        "chords": [
+            {
+                "tick": chord.tick,
+                "label": chord.label,
+                "root": chord.root,
+                "kind": chord.kind,
+                "bass": chord.bass,
+            }
+            for chord in solution.chords
+        ],
         "polyphony_analysis": solution.polyphony.to_dict(),
         # What the melody reduction removed, when the caller chose a policy:
         # kept notes are untouched, this lists exactly what was dropped.

@@ -1,10 +1,15 @@
 """Guitar fingering arranger (MuScriptor Plus).
 
-A symbolic post-transcription step: given one monophonic MIDI track, choose
-globally convenient string/fret positions for every note with dynamic
-programming over musical phrases. Pitch, onset and duration are never
-modified; unsupported input (polyphony, unplayable pitches, ambiguous track
-selection) fails with an explicit error instead of a silent fallback.
+A symbolic post-transcription step: given one MIDI track, choose globally
+convenient string/fret positions for every note with dynamic programming over
+musical phrases. Onsets, durations and velocities are never modified. By
+default the part is first normalized to the standard tuning: a global
+transposition (for detuned recordings) and the removal of out-of-range
+octave duplicates, both reported in the document; `normalize=False` disables
+that and makes out-of-range notes a plain error. Unsupported input (an
+ambiguous track choice, onsets with more notes than strings under
+`chord_overflow="error"`, contradictory locks) fails with an explicit error
+instead of a silent fallback.
 
 The package is pure Python: no filesystem access, no FastAPI, no torch.
 """
@@ -27,6 +32,7 @@ from .errors import (
 )
 from .events import analyze_polyphony, group_into_events
 from .chords import generate_chord_shapes
+from .harmony import detect_chord_labels
 from .fretboard import (
     STANDARD_TUNING,
     possible_fingerings,
@@ -34,6 +40,7 @@ from .fretboard import (
     resolve_tuning,
 )
 from .melody import MELODY_POLICIES, reduce_to_melody
+from .normalize import normalize_to_tuning
 from .midi_input import (
     DRUM_CHANNEL,
     ParsedMidi,
@@ -48,12 +55,16 @@ from .models import (
     AssignedNote,
     BarreState,
     ChordFingeringState,
+    ChordLabel,
     ChordNoteState,
+    ChordReduction,
+    DroppedNote,
     FingeringState,
     FretPosition,
     GuitarTuning,
     MelodyReduction,
     MidiNote,
+    Normalization,
     NoteEvent,
     Phrase,
     PhraseSolution,
@@ -92,7 +103,10 @@ __all__ = [
     "AssignedNote",
     "BarreState",
     "ChordFingeringState",
+    "ChordLabel",
     "ChordNoteState",
+    "ChordReduction",
+    "DroppedNote",
     "FingeringExportError",
     "FingeringState",
     "FretPosition",
@@ -106,6 +120,7 @@ __all__ = [
     "MelodyReduction",
     "MidiNote",
     "MidiParseError",
+    "Normalization",
     "NoteEvent",
     "ParsedMidi",
     "Phrase",
@@ -131,11 +146,13 @@ __all__ = [
     "check_monophonic",
     "chord_open_string_penalty",
     "chord_transition_cost",
+    "detect_chord_labels",
     "event_overlaps_others",
     "explain_chord_lines",
     "explain_lines",
     "generate_chord_shapes",
     "group_into_events",
+    "normalize_to_tuning",
     "parse_midi",
     "parse_overrides",
     "possible_fingerings",
