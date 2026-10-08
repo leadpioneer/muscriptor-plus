@@ -12,6 +12,8 @@ export default defineConfig({
       [
         "/transcribe",
         "/instruments",
+        "/model",
+        "/stems",
         "/auralize",
         "/sheets",
         "/arrange",
