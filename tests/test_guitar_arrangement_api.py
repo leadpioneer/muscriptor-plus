@@ -220,9 +220,34 @@ def test_arrange_endpoint_reports_detected_chords():
     ]
 
 
-def test_arrangement_to_pdf_endpoint_engraves_via_musescore():
-    import zipfile
+def test_arrangement_to_pdf_endpoint_zips_the_engraved_score(monkeypatch):
+    """The endpoint renders MusicXML, asks MuseScore for a PDF and zips both.
+
+    MuseScore itself is external (not installed on CI runners), so the
+    engraving call is faked: this checks the endpoint wiring and the archive,
+    not MuseScore's rendering.
+    """
     import io
+    import zipfile
+    from pathlib import Path
+
+    from muscriptor import server as server_module
+    from muscriptor.utils import sheets
+
+    fake_pdf = b"%PDF-1.4\n" + b"0" * 2048
+
+    def fake_run(binary, args):
+        Path(args[1]).write_bytes(fake_pdf)
+
+        class Finished:
+            stdout = ""
+            stderr = ""
+            returncode = 0
+
+        return Finished()
+
+    monkeypatch.setattr(sheets, "find_musescore", lambda: "fake-musescore")
+    monkeypatch.setattr(server_module, "_run", fake_run)
 
     data = melody_midi([(p, 0, 480) for p in (60, 64, 67)])
     document = _post(_client(), data=data).json()
