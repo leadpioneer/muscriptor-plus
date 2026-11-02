@@ -92,6 +92,8 @@ export type GuitarArrangement = {
     track_name: string | null;
     channel: number;
     program: number | null;
+    /** Global tempo map in microseconds per beat; absent in schema-v2 docs. */
+    tempo_events?: { tick: number; tempo: number; is_default: boolean }[];
   };
   instrument: {
     name: string;

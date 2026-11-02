@@ -8,6 +8,7 @@ Contains only the classes needed to run the transcription model:
 - nullify_all_conditions (for CFG at inference)
 """
 
+import logging
 import time
 from collections import defaultdict
 from copy import deepcopy
@@ -22,6 +23,8 @@ import muscriptor.accelerator
 from muscriptor.modules.mel_spectrogram import _MelSpectrogram
 from muscriptor.utils.sampling import length_to_mask
 
+
+logger = logging.getLogger(__name__)
 
 ConditionType = tuple[torch.Tensor, torch.Tensor]  # (embedding [B, T, D], mask [B, T])
 
@@ -68,10 +71,6 @@ class ConditioningAttributes:
             "joint_embed": self.joint_embed_attributes,
             "symbolic": self.symbolic_attributes,
         }
-
-    @classmethod
-    def condition_types(cls) -> list:
-        return ["text", "wav", "joint_embed", "symbolic"]
 
 
 def nullify_wav(cond: WavCondition) -> WavCondition:
@@ -176,9 +175,11 @@ class MelSpectrogramConditioner(nn.Module):
             if self.log_scale:
                 mel = torch.log(mel + self.eps)
         muscriptor.accelerator.synchronize()
-        print(
-            f"[muscriptor] mel-spec ({wav.shape[0]} × {wav.shape[-1]} samples): "
-            f"{time.perf_counter() - t0:.3f}s"
+        logger.info(
+            "[muscriptor] mel-spec (%d × %d samples): %.3fs",
+            wav.shape[0],
+            wav.shape[-1],
+            time.perf_counter() - t0,
         )
         return mel
 

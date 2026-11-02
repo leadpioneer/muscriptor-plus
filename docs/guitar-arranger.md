@@ -531,7 +531,7 @@ string_travel}`.
 | `too_many_chord_notes` | 422 | 7+ нот на онсете при `--chord-overflow error` (при `reduce` онсет сокращается и попадает в `chord_reductions`); `details` — событие и число струн |
 | `unplayable_chord` | 422 | Ни одна совместная аппликатура не звучит все высоты при `--chord-overflow error` (при `reduce` онсет сокращается с причиной `unplayable_chord`); `details` — pitches, число струн и причина |
 | `incompatible_chord_locks` | 422 | Фиксации аккорда противоречат друг другу |
-| `polyphonic_input` | 422 | Только для устаревшего монопути (`check_monophonic`); конвейер v3 его не бросает |
+| `polyphonic_input` | 422 | Устаревший код; конвейер v3 (аккордовый солвер) его не бросает |
 | `invalid_arrangement` | 400 | Документ не JSON / не проходит валидацию конвертера |
 | `unsupported_arrangement_schema` | 400 | `schema_version` не 2 и не 3 |
 | `fingering_export_failed` | 500 | MuseScore не смог записать PDF |
@@ -569,8 +569,8 @@ string_travel}`.
 - выбор мелодической политики: «Все ноты», «Верхняя нота», «Нижняя нота»;
 - метрики: смены позиции, переносы кисти, наибольший сдвиг, стоимость фразы,
   число зафиксированных нот;
-- прослушивание на условных **120 BPM** (в документе нет карты темпа;
-  относительный ритм точен);
+- прослушивание в темпе документа (120 BPM, если карты темпов нет);
+  относительный ритм точен;
 - скачивания: `arrangement.json`, `arrangement.mid`, ASCII-таб (`.txt`),
   MusicXML и ZIP (PDF + MusicXML).
 

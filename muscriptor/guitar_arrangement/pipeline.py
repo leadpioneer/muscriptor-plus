@@ -7,8 +7,10 @@ Typer, so the whole flow stays testable without either.
 
 from .chords import choose_playable_subset
 from .errors import (
+    InvalidMaxFretError,
     InvalidMelodyPolicyError,
     InvalidOverridesError,
+    TooManyNotesError,
     UnplayableNoteError,
 )
 from .events import analyze_polyphony, group_into_events
@@ -30,6 +32,17 @@ from .normalize import normalize_to_tuning
 from .phrases import split_event_phrases
 from .serialization import parse_overrides, solution_to_dict
 from .solver import solve_event_phrases
+
+# Highest fret the solver will ever consider. Beyond this the legal
+# position/fingering candidate sets blow up with max_fret, so one note can hang
+# the arranger (or OOM it) for no musical gain.
+MAX_FRET_LIMIT = 36
+
+# Phrase solving is quadratic-ish in the number of notes; ~5000 notes already
+# costs seconds of CPU, and a 100k-note upload would pin a worker thread for
+# minutes. Checked after the melody reduction, so `melody=top/bottom` can still
+# shrink a large polyphonic part.
+MAX_ARRANGEMENT_NOTES = 5000
 
 
 def arrange(
@@ -109,6 +122,10 @@ def arrange_solution(
         raise InvalidMelodyPolicyError(
             f"unknown melody policy {melody_policy!r} (expected off, top or bottom)"
         )
+    if max_fret < 0 or max_fret > MAX_FRET_LIMIT:
+        raise InvalidMaxFretError(
+            f"max_fret {max_fret!r} is outside 0..{MAX_FRET_LIMIT}"
+        )
     if config is None:
         config = SolverConfig(max_fret=max_fret, phrase_gap_beats=phrase_gap_beats)
     tuning = resolve_tuning(tuning_name)
@@ -118,6 +135,12 @@ def arrange_solution(
     notes = selected.notes
     if melody_policy != "off":
         notes, reduction = reduce_to_melody(notes, melody_policy)
+    if len(notes) > MAX_ARRANGEMENT_NOTES:
+        raise TooManyNotesError(
+            f"track has {len(notes)} notes; the arranger accepts at most "
+            f"{MAX_ARRANGEMENT_NOTES} (use a shorter excerpt or the top/bottom "
+            "melody policy)"
+        )
     normalization = None
     if normalize:
         notes, normalization = normalize_to_tuning(notes, tuning, config)

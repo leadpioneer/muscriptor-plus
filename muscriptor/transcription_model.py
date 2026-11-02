@@ -241,6 +241,12 @@ def _build_instrument_for_program(tokenizer: MT3Tokenizer) -> Callable[[int], st
     group_map = tokenizer.group_program_map
     program_to_name: dict[int, str] = {}
     for name, gid in MT3_FULL_PLUS_GROUP_NAMES.items():
+        if name == "drums":
+            # Drum notes arrive as DRUM_PROGRAM tokens. The learned "drums"
+            # group id also indexes a singleton program group (96 in MT3), so
+            # mapping it here would rename program 96 "drums" and route it to
+            # the percussion channel.
+            continue
         if gid in group_map and group_map[gid]:
             program_to_name[group_map[gid][0]] = name
 
@@ -685,8 +691,16 @@ class TranscriptionModel:
         if mode is False:
             return None
         tensor, sample_rate = audio if isinstance(audio, tuple) else (audio, None)
+        # Beat detection defaults to CPU; run it on the GPU when the model is
+        # there (post-processing a long track otherwise holds the transcription
+        # lock for much longer). CPU/MPS keep the default.
+        device = "cpu"
+        if (dev := getattr(self, "_device", None)) is not None and dev.type == "cuda":
+            device = str(dev)
         try:
-            return detect_grid(self._load_wav(tensor, sample_rate), _SAMPLE_RATE)
+            return detect_grid(
+                self._load_wav(tensor, sample_rate), _SAMPLE_RATE, device=device
+            )
         except BeatDetectionError as e:
             if mode is True:
                 raise

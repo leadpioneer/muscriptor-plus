@@ -265,6 +265,10 @@ export function useTranscription(deps: TranscriptionDeps) {
     let noteCount = 0;
     // Kept for the completion event, which fires after the stream has ended.
     let beatGrid: BeatGrid | null = null;
+    // True once the terminal `transcription_complete` event has arrived. A
+    // stream that ends without it (e.g. the connection dropped mid-run) must
+    // not be reported as a successful transcription.
+    let sawComplete = false;
     try {
       const cond = getConditioning();
       const removeVocals = getRemoveVocals();
@@ -297,6 +301,7 @@ export function useTranscription(deps: TranscriptionDeps) {
         const ev = raw as StreamedEvent;
         if (ev.type === "transcription_complete") {
           // Final event: the assembled MIDI file. Enables the download button.
+          sawComplete = true;
           setMidi(
             ev.data,
             ev.quantized_midi,
@@ -334,6 +339,12 @@ export function useTranscription(deps: TranscriptionDeps) {
         if (ev.type === "end" && ev.end_time > maxEnd) maxEnd = ev.end_time;
       }
       if (isStale()) return;
+      // The stream closed without the terminal `transcription_complete` event:
+      // the server never assembled MIDI (connection dropped, or an unhandled
+      // server-side error), so this is a failure, not a success.
+      if (!sawComplete) {
+        throw new TranscribeError("transcription stream ended before completion");
+      }
       // Stop the transport ~0.3 s after the last note ends.
       if (maxEnd > 0) audio.scheduleStop(maxEnd + 0.3);
       setAppState("done");

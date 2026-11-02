@@ -97,7 +97,11 @@ def normalize_to_tuning(
 
     source_low = min(note.pitch for note in notes)
     source_high = max(note.pitch for note in notes)
-    if hard:
+    if hard or not kept:
+        # Either no shift fits every note, or every note was dropped as an
+        # octave duplicate: hand the notes back unchanged so the pipeline's
+        # range validation reports the offenders instead of silently returning
+        # an arrangement with no notes.
         return notes, Normalization(tuning.name, source_low, source_high, 0, ())
 
     fitted = tuple(replace(note, pitch=note.pitch + shift) for note in kept)

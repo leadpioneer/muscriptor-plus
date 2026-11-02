@@ -27,6 +27,10 @@ from muscriptor.utils.download import download_if_necessary
 # and cached under ~/.cache/muscriptor/.
 _LOCAL_SOUNDFONT = Path(__file__).parent.parent.parent / "MuseScore_General.sf2"
 _SAMPLE_RATE = 44100
+# FluidSynth renders far faster than real time, so even a 30-minute MIDI
+# finishes well inside this; it only stops a runaway synthesis (e.g. a MIDI
+# whose ticks stretch to hours) from hanging the request forever.
+_SYNTH_TIMEOUT_S = 600
 
 
 def _load_mono_44k(path: Path) -> np.ndarray:
@@ -74,6 +78,7 @@ def _synthesize_midi(midi_path: Path, soundfont_path: Path) -> np.ndarray:
                 str(midi_path),
             ],
             capture_output=True,
+            timeout=_SYNTH_TIMEOUT_S,
         )
         if result.returncode != 0:
             raise RuntimeError(

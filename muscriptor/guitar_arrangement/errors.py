@@ -53,8 +53,7 @@ class PolyphonicInputError(GuitarArrangementError):
     with distinct onsets are fine and do not trigger this.
 
     Since v3 the chord solver handles 1–6 simultaneous onsets, so this error
-    is only raised by the explicit `check_monophonic` helper (kept for the
-    legacy monophonic path and its tests) — never by the default pipeline.
+    is never raised by the pipeline; it is kept only for API stability.
     """
 
     code = "polyphonic_input"
@@ -96,6 +95,24 @@ class InvalidMelodyPolicyError(GuitarArrangementError):
     """The requested melody reduction policy is not one of off/top/bottom."""
 
     code = "invalid_melody_policy"
+
+
+class InvalidMaxFretError(GuitarArrangementError):
+    """max_fret is outside the playable range 0..MAX_FRET_LIMIT."""
+
+    code = "invalid_max_fret"
+
+
+class TooManyNotesError(GuitarArrangementError):
+    """The selected track has more notes than the arranger will process."""
+
+    code = "too_many_notes"
+
+
+class TooLongArrangementError(GuitarArrangementError):
+    """The selected track spans more beats than the arranger will process."""
+
+    code = "too_long"
 
 
 class InvalidArrangementError(GuitarArrangementError):

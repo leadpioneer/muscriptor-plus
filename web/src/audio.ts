@@ -429,7 +429,12 @@ export class AudioEngine {
     // re-schedule every known note (and the auto-stop) from scratch.
     if (t.seconds < 0.001) {
       t.cancel();
-      for (const n of this.allNotes) this.scheduleNoteRaw(n);
+      // Before the synth is ready every note is already queued in
+      // pendingNotes and initSynth flushes them; re-scheduling here would
+      // queue every note a second time and play each one twice.
+      if (this.synth) {
+        for (const n of this.allNotes) this.scheduleNoteRaw(n);
+      }
       if (this.autoStopAt !== null) this.scheduleStopRaw(this.autoStopAt);
     }
     t.start();
@@ -451,8 +456,12 @@ export class AudioEngine {
     // a full re-schedule of everything that starts after the new position.
     t.cancel();
     t.seconds = target;
-    for (const n of this.allNotes) {
-      if (n.start >= target) this.scheduleNoteRaw(n);
+    // Same as play(): while the synth loads, pendingNotes already holds every
+    // note and initSynth will schedule them, so do not queue them twice.
+    if (this.synth) {
+      for (const n of this.allNotes) {
+        if (n.start >= target) this.scheduleNoteRaw(n);
+      }
     }
     if (this.autoStopAt !== null && this.autoStopAt > target) {
       this.scheduleStopRaw(this.autoStopAt);
@@ -485,11 +494,14 @@ export class AudioEngine {
     this.autoStopAt = null;
     this.stopWavSource();
     this.wavBuffer = null;
-    // The instrument list is rebuilt from scratch, so unmute everything.
+    // The instrument list is rebuilt from scratch, so unmute everything and
+    // reset per-instrument gain (an existing channel keeps its last gain
+    // otherwise, since channelFor() doesn't re-apply it for existing channels).
     this.mutedInstruments.clear();
     this.instrumentVolumes.clear();
     for (const ch of this.channels.values()) {
       this.synth?.midiChannels[ch]?.setSystemParameter("isMuted", false);
+      this.synth?.midiChannels[ch]?.setSystemParameter("gain", 1);
     }
   }
 

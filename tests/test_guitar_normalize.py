@@ -115,6 +115,15 @@ def test_impossible_range_reports_the_original_offenders():
     assert excinfo.value.details["offender_pitches"] == [28, 90]
 
 
+def test_all_octave_duplicates_are_not_silently_dropped():
+    """Every note is out of range and doubled an octave apart, so nothing can
+    be kept. The part must be returned unchanged so the range check reports the
+    offenders — never a 200 with zero notes."""
+    with pytest.raises(UnplayableNoteError) as excinfo:
+        _document([(16, 0, 480), (28, 0, 480)])
+    assert excinfo.value.details["offender_pitches"] == [16, 28]
+
+
 def test_no_normalize_keeps_the_plain_range_error():
     with pytest.raises(UnplayableNoteError) as excinfo:
         _document(_EB_CHORD, normalize=False)

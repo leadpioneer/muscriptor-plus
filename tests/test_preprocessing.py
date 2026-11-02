@@ -293,9 +293,10 @@ class FakePreprocessor:
 
     processor_id = "fake-vocal-removal"
 
-    def __init__(self, error: Exception | None = None) -> None:
+    def __init__(self, error: Exception | None = None, vocals: bool = True) -> None:
         self.calls: list = []
         self.error = error
+        self.vocals = vocals
 
     def process(self, input_path, output_dir, device, progress_callback=None):
         from muscriptor.preprocessing.models import SeparationSettings
@@ -309,7 +310,7 @@ class FakePreprocessor:
         return PreprocessResult(
             input_path=Path(input_path),
             audio_for_transcription=output_dir / "instrumental.wav",
-            vocals_path=output_dir / "vocals.wav",
+            vocals_path=(output_dir / "vocals.wav") if self.vocals else None,
             instrumental_path=output_dir / "instrumental.wav",
             processor_id=self.processor_id,
             model_id="fake-model",
@@ -424,6 +425,18 @@ def test_stems_are_downloadable_and_unknown_runs_404(tmp_path):
     assert instrumental.status_code == 200
     assert client.get(f"/stems/{run_id}/nope").status_code == 404
     assert client.get("/stems/deadbeef/vocals").status_code == 404
+
+
+def test_final_event_lists_only_the_stems_that_were_produced(tmp_path):
+    """A separation with no vocals stem must not advertise a 404 download."""
+    pre = FakePreprocessor(vocals=False)
+    client = _app_with_preprocessor(pre)
+    resp = _post(client, tmp_path, remove_vocals=True)
+    final = _parse_sse(resp.text)[-1]
+    assert set(final["stems"]) == {"instrumental"}
+    run_id = final["stems"]["instrumental"].split("/")[2]
+    assert client.get(f"/stems/{run_id}/instrumental").status_code == 200
+    assert client.get(f"/stems/{run_id}/vocals").status_code == 404
 
 
 def test_preprocessing_failure_stops_before_transcription(tmp_path):

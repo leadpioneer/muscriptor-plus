@@ -318,27 +318,29 @@ class LMModel(nn.Module):
                 _t = time.perf_counter()
                 cfg_conditions: ConditionTensors = self.condition_provider(prepared)
                 muscriptor.accelerator.synchronize()
-                print(
-                    f"[muscriptor] encode conditions (total): {time.perf_counter() - _t:.3f}s"
+                logger.info(
+                    "[muscriptor] encode conditions (total): %.3fs",
+                    time.perf_counter() - _t,
                 )
             else:
                 null_conditions = nullify_all_conditions(conditions)
                 all_conditions = conditions + null_conditions
                 prepared = self.condition_provider.tokenize(all_conditions)
-                print(
-                    "[muscriptor] instrument_group tokens:",
+                logger.info(
+                    "[muscriptor] instrument_group tokens: %s",
                     prepared.get("instrument_group"),
                 )
-                print(
-                    "[muscriptor] dataset_name tokens:    ",
+                logger.info(
+                    "[muscriptor] dataset_name tokens:    %s",
                     prepared.get("dataset_name"),
                 )
                 muscriptor.accelerator.synchronize()
                 _t = time.perf_counter()
                 cfg_conditions = self.condition_provider(prepared)
                 muscriptor.accelerator.synchronize()
-                print(
-                    f"[muscriptor] encode conditions (total): {time.perf_counter() - _t:.3f}s"
+                logger.info(
+                    "[muscriptor] encode conditions (total): %.3fs",
+                    time.perf_counter() - _t,
                 )
         else:
             cfg_conditions = {}

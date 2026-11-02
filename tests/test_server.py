@@ -638,10 +638,10 @@ def test_sheets_missing_file(monkeypatch):
     assert client.post("/sheets").status_code == 422
 
 
-def test_sheets_engraves_concurrently(monkeypatch):
-    """Engraving is not serialized: it costs a handful of short MuseScore
-    processes and none of the GPU, so a second caller runs straight away
-    instead of waiting for — or being refused because of — the first."""
+def test_sheets_refuses_a_concurrent_engrave(monkeypatch):
+    """MuseScore is process-heavy: N parallel renders would spawn N processes,
+    so a second engrave gets an immediate 503 instead of occupying a worker
+    thread behind the first one."""
     first_reached = threading.Event()
     gate = threading.Event()
     calls = []
@@ -654,6 +654,7 @@ def test_sheets_engraves_concurrently(monkeypatch):
         return _fake_write_sheets(midi_bytes, out_dir)
 
     monkeypatch.setattr(server_module, "write_sheets", blocks_the_first_caller)
+    monkeypatch.setattr(server_module, "_RENDER_LOCK_TIMEOUT_S", 0.05)
     app = create_app(make_model())
     files = {"midi": ("in.mid", FAKE_MIDI, "audio/midi")}
     out = {}
@@ -665,10 +666,51 @@ def test_sheets_engraves_concurrently(monkeypatch):
     a.start()
     assert first_reached.wait(timeout=5)
 
-    # The first engrave is still inside MuseScore at this point.
-    started = time.monotonic()
-    assert TestClient(app).post("/sheets", files=files).status_code == 200
-    assert time.monotonic() - started < 5.0, "second engrave waited on the first"
+    # The first engrave is still inside MuseScore, so the second caller is
+    # refused at once rather than queueing a second MuseScore process.
+    busy = TestClient(app).post("/sheets", files=files)
+    assert busy.status_code == 503
+    assert "another sheet render" in busy.json()["detail"]
+
+    gate.set()
+    a.join(timeout=10)
+    assert out["first"] == 200
+    assert len(calls) == 1
+
+
+def test_auralize_refuses_a_concurrent_synthesis(monkeypatch):
+    """FluidSynth keeps a whole mix in RAM and spawns a process, so a second
+    /auralize at once gets an immediate 503 instead of a second synth job."""
+    import muscriptor.utils.auralization as auralization
+
+    first_reached = threading.Event()
+    gate = threading.Event()
+
+    def blocks_the_first_render(**kwargs):
+        first_reached.set()
+        assert gate.wait(timeout=10), "gate never opened"
+        Path(kwargs["output_path"]).write_bytes(b"RIFF")
+
+    monkeypatch.setattr(auralization, "synthesize", blocks_the_first_render)
+    monkeypatch.setattr(server_module, "_RENDER_LOCK_TIMEOUT_S", 0.05)
+    app = create_app(make_model())
+    files = {"midi": ("in.mid", FAKE_MIDI, "audio/midi")}
+    out = {}
+
+    def post_first():
+        out["first"] = (
+            TestClient(app)
+            .post("/auralize", files=files, data={"mode": "synth"})
+            .status_code
+        )
+
+    a = threading.Thread(target=post_first)
+    a.start()
+    assert first_reached.wait(timeout=5)
+
+    busy = TestClient(app).post("/auralize", files=files, data={"mode": "synth"})
+    assert busy.status_code == 503
+    assert "another auralization" in busy.json()["detail"]
 
     gate.set()
     a.join(timeout=10)
@@ -739,3 +781,243 @@ def test_model_idle_unload_frees_vram_after_the_timeout(tmp_path):
     )
     assert _parse_sse(resp.text)[-1]["type"] == "transcription_complete"
     assert client.get("/model").json()["status"] == "ready"
+
+
+def test_transcribe_is_refused_while_a_model_swap_is_loading(tmp_path):
+    """A transcription during a /model swap must be refused with 409, not run
+    on the outgoing weights while the loader frees their memory."""
+    gate = threading.Event()
+
+    def blocking_loader(size):
+        gate.wait(timeout=10)
+        return make_model()
+
+    client = TestClient(create_app(make_model(), model_loader=blocking_loader))
+
+    resp = client.post("/model", data={"size": "large"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "loading"
+    assert client.get("/model").json()["status"] == "loading"
+
+    resp = client.post(
+        "/transcribe",
+        files={"file": ("silent.wav", _wav_bytes(tmp_path), "audio/wav")},
+    )
+    assert resp.status_code == 409
+    gate.set()
+
+
+def test_model_switch_refused_while_transcription_running(tmp_path):
+    """POST /model during a transcription is refused with 409, and the failed
+    swap must not leave the server reporting 'loading'."""
+    first_reached = threading.Event()
+    gate = threading.Event()
+    model, _ = _blocking_transcribe_model(first_reached, gate)
+    loader, _ = _make_loader([])
+    app = create_app(model, model_loader=loader)
+    payload = _wav_bytes(tmp_path)
+    out: dict[str, list] = {}
+
+    t = threading.Thread(
+        target=_post_transcribe, args=(app, payload, "tab-A", out, "A")
+    )
+    t.start()
+    assert first_reached.wait(timeout=5)
+
+    client = TestClient(app)
+    assert client.post("/model", data={"size": "large"}).status_code == 409
+    # The reverted swap must not strand the server on a fake 'loading' status.
+    assert client.get("/model").json()["status"] == "ready"
+
+    gate.set()
+    t.join(timeout=10)
+
+
+def test_transcribe_midstream_error_ends_with_error_event(tmp_path):
+    """A RuntimeError from model.transcribe (e.g. CUDA OOM) must not look like a
+    successful transcription: the stream ends with an error event, never a
+    `transcription_complete`."""
+    model = make_model()
+
+    def failing_transcribe(*args, **kwargs):
+        yield NoteStartEvent(pitch=60, start_time=0.0, index=0, instrument="piano")
+        raise RuntimeError("CUDA out of memory")
+
+    model.transcribe.side_effect = failing_transcribe
+    client = TestClient(create_app(model), raise_server_exceptions=False)
+    resp = client.post(
+        "/transcribe",
+        files={"file": ("silent.wav", _wav_bytes(tmp_path), "audio/wav")},
+    )
+    assert resp.status_code == 200
+    parsed = _parse_sse(resp.text)
+    assert parsed[-1] == {"type": "error", "detail": "CUDA out of memory"}
+    assert all(ev["type"] != "transcription_complete" for ev in parsed)
+
+
+def test_transcribe_has_no_duration_limit(tmp_path, monkeypatch):
+    """The SSE endpoint streams chunk-by-chunk and intentionally does not apply
+    /transcribe/midi's 15-minute duration cap."""
+    monkeypatch.setattr(server_module, "_MAX_TRANSCRIBE_MIDI_DURATION_S", 0.05)
+    model = make_model()
+    client = TestClient(create_app(model), raise_server_exceptions=False)
+    resp = client.post(
+        "/transcribe",
+        files={"file": ("silent.wav", _wav_bytes(tmp_path), "audio/wav")},
+    )
+    assert resp.status_code == 200
+    model.transcribe.assert_called_once()
+
+
+def _wav_with_sample_width(sampwidth: int) -> bytes:
+    """A minimal PCM WAV whose header claims `sampwidth` bytes per sample."""
+    import struct
+
+    nframes = 16
+    data = b"\x00" * (sampwidth * nframes)
+    out = io.BytesIO()
+    out.write(b"RIFF")
+    out.write(struct.pack("<I", 36 + len(data)))
+    out.write(b"WAVEfmt ")
+    out.write(
+        struct.pack(
+            "<IHHIIHH", 16, 1, 1, 16000, 16000 * sampwidth, sampwidth, sampwidth * 8
+        )
+    )
+    out.write(b"data")
+    out.write(struct.pack("<I", len(data)))
+    out.write(data)
+    return out.getvalue()
+
+
+def test_transcribe_rejects_odd_sample_width_as_400():
+    """A WAV with a non-standard sample width used to escape _decode_audio as a
+    ValueError (500); it must be reported as the client's fault (400)."""
+    client = TestClient(create_app(make_model()), raise_server_exceptions=False)
+    resp = client.post(
+        "/transcribe",
+        files={"file": ("weird.wav", _wav_with_sample_width(5), "audio/wav")},
+    )
+    assert resp.status_code == 400
+
+
+def _wav_with_sample_rate(sample_rate: int) -> bytes:
+    """A minimal PCM WAV whose header claims `sample_rate` (wave refuses sr=0)."""
+    import struct
+
+    nframes = 16
+    data = b"\x00\x00" * nframes
+    out = io.BytesIO()
+    out.write(b"RIFF")
+    out.write(struct.pack("<I", 36 + len(data)))
+    out.write(b"WAVEfmt ")
+    out.write(struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16))
+    out.write(b"data")
+    out.write(struct.pack("<I", len(data)))
+    out.write(data)
+    return out.getvalue()
+
+
+def test_transcribe_rejects_bad_sample_rate_headers_as_400():
+    """sr=0 used to divide by zero and sr=1000003 used to ask the resampler
+    for ~64 GB; both are bad uploads, not server failures."""
+    client = TestClient(create_app(make_model()), raise_server_exceptions=False)
+    for sample_rate in (0, 1000003):
+        wav = _wav_with_sample_rate(sample_rate)
+        for path in ("/transcribe", "/transcribe/midi"):
+            resp = client.post(path, files={"file": ("bad.wav", wav, "audio/wav")})
+            assert resp.status_code == 400, (path, sample_rate)
+            assert "sample rate" in resp.json()["detail"]
+
+
+def test_decode_audio_checks_the_sample_rate_too():
+    """The header probe can miss a rate (non-WAV), so the decoder checks it."""
+    from fastapi import HTTPException
+
+    for sample_rate in (0, 1000003):
+        try:
+            server_module._decode_audio(_wav_with_sample_rate(sample_rate), "bad.wav")
+        except HTTPException as e:
+            assert e.status_code == 400
+        else:  # pragma: no cover - only on a regression
+            raise AssertionError(f"sample rate {sample_rate} was accepted")
+
+
+def test_auralize_rejects_an_oversized_midi():
+    """MIDI is capped at a couple of MB: mido expands it ~100x in memory."""
+    client = TestClient(create_app(make_model()), raise_server_exceptions=False)
+    payload = b"\x00" * (server_module._MIDI_MAX_BYTES + 1)
+    resp = client.post(
+        "/auralize",
+        files={"midi": ("big.mid", payload, "audio/midi")},
+        data={"mode": "synth"},
+    )
+    assert resp.status_code == 413
+
+
+def test_oversized_body_is_rejected_before_multipart_parsing(monkeypatch, tmp_path):
+    """FastAPI spools the whole body before the handler runs; the middleware
+    must answer 413 first (Content-Length is present here)."""
+    monkeypatch.setitem(server_module._UPLOAD_BODY_LIMITS, "/transcribe", 1024)
+    model = make_model()
+    client = TestClient(create_app(model), raise_server_exceptions=False)
+    resp = client.post(
+        "/transcribe",
+        files={"file": ("silent.wav", _wav_bytes(tmp_path), "audio/wav")},
+    )
+    assert resp.status_code == 413
+    model.transcribe.assert_not_called()
+
+
+def test_oversized_chunked_body_is_rejected_while_reading(monkeypatch):
+    """A chunked upload carries no Content-Length; the byte stream itself is
+    capped, so it cannot fill the temp dir either."""
+    monkeypatch.setitem(server_module._UPLOAD_BODY_LIMITS, "/transcribe", 1024)
+    model = make_model()
+    client = TestClient(create_app(model), raise_server_exceptions=False)
+
+    def chunks():
+        yield (
+            b'--b\r\nContent-Disposition: form-data; name="file"; '
+            b'filename="a.wav"\r\nContent-Type: audio/wav\r\n\r\n'
+        )
+        yield b"x" * 800
+        yield b"x" * 800
+        yield b"\r\n--b--\r\n"
+
+    resp = client.post(
+        "/transcribe",
+        content=chunks(),
+        headers={"Content-Type": "multipart/form-data; boundary=b"},
+    )
+    assert resp.status_code == 413
+    model.transcribe.assert_not_called()
+
+
+def test_auralize_mix_spools_the_audio_upload(monkeypatch, tmp_path):
+    """The audio upload is copied to a scratch file by the render worker (under
+    the lock), so mix mode still hands the renderer a real file path."""
+    import muscriptor.utils.auralization as auralization
+
+    seen = {}
+    payload = b"RIFF" + b"x" * 2048
+
+    def fake_auralize(**kwargs):
+        seen["audio"] = Path(kwargs["original_audio_path"]).read_bytes()
+        Path(kwargs["output_path"]).write_bytes(payload)
+
+    monkeypatch.setattr(auralization, "auralize", fake_auralize)
+    wav = _wav_bytes(tmp_path)
+    resp = TestClient(create_app(make_model())).post(
+        "/auralize",
+        files={
+            "midi": ("in.mid", FAKE_MIDI, "audio/midi"),
+            "audio": ("in.wav", wav, "audio/wav"),
+        },
+        data={"mode": "mix"},
+    )
+    assert resp.status_code == 200
+    assert resp.content == payload
+    # Already-compressed WAV must bypass GZipMiddleware: no second gzip pass.
+    assert resp.headers.get("content-encoding") == "identity"
+    assert seen["audio"] == wav

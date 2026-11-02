@@ -32,30 +32,24 @@ def analyze_polyphony(events: tuple[NoteEvent, ...]) -> PolyphonyAnalysis:
     polyphonic_event_count = sum(1 for e in events if len(e.notes) > 1)
     largest = max((len(e.notes) for e in events), default=0)
 
-    # Elementary timeline intervals: split at every onset and offset tick.
-    # A note is active on [onset, offset); counting over the sorted boundary
-    # ticks is exact and deterministic.
-    boundaries = sorted({t for e in events for t in (e.onset_ticks,)}) + sorted(
-        {note.offset_ticks for e in events for note in e.notes}
-    )
-    boundaries = sorted(set(boundaries))
-    onsets = sorted(e.onset_ticks for e in events)
-    boundaries = sorted(set(boundaries) | set(onsets))
+    # Sweep line over onset/offset deltas: each note contributes +1 at its
+    # onset and -1 at its offset, so the active count is accumulated in one
+    # pass instead of rescanning every note for every boundary.
+    deltas: dict[int, int] = {}
+    for e in events:
+        for note in e.notes:
+            deltas[note.onset_ticks] = deltas.get(note.onset_ticks, 0) + 1
+            deltas[note.offset_ticks] = deltas.get(note.offset_ticks, 0) - 1
 
     max_active = 0
     overlapping_regions = 0
-    for start, end in zip(boundaries, boundaries[1:]):
-        if end <= start:
-            continue
-        middle = start  # half-open [start, end): onset <= t < offset
-        active = sum(
-            1
-            for e in events
-            for note in e.notes
-            if note.onset_ticks <= middle < note.offset_ticks
-        )
+    active = 0
+    boundaries = sorted(deltas)
+    for index, tick in enumerate(boundaries):
+        active += deltas[tick]
+        # `active` holds the count on [tick, next boundary): onset <= t < offset.
         max_active = max(max_active, active)
-        if active >= 2:
+        if index + 1 < len(boundaries) and active >= 2:
             overlapping_regions += 1
 
     return PolyphonyAnalysis(

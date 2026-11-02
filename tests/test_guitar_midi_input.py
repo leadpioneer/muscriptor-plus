@@ -1,11 +1,10 @@
-"""Unit tests for the mido adapter: parsing, ids, selection, monophony."""
+"""Unit tests for the mido adapter: parsing, ids, selection."""
 
 import pytest
 
 from muscriptor.guitar_arrangement import (
     AmbiguousTrackError,
     MidiParseError,
-    PolyphonicInputError,
     TrackNotFoundError,
     parse_midi,
     select_notes,
@@ -52,6 +51,17 @@ def test_velocity_zero_note_on_closes_the_note():
     assert len(notes) == 1
     assert notes[0].onset_ticks == 0
     assert notes[0].offset_ticks == 240
+
+
+def test_zero_length_notes_get_a_positive_duration():
+    # note_on and note_off on one tick: both the matched path...
+    matched = raw_midi([[mido_note_on(64, 100, 0), mido_note_on(64, 0, 0)]])
+    note = select_notes(parse_midi(matched)).notes[0]
+    assert (note.onset_ticks, note.offset_ticks) == (0, 1)
+    # ...and the unmatched one, flushed at the track's final tick (also 0).
+    unmatched = melody_midi([(64, 0, 0)])
+    note = select_notes(parse_midi(unmatched)).notes[0]
+    assert note.offset_ticks == note.onset_ticks + 1
 
 
 def mido_note_on(pitch, velocity, delta, channel=0):
@@ -161,29 +171,3 @@ def test_file_without_notes_is_an_error():
 def test_garbage_bytes_are_a_parse_error():
     with pytest.raises(MidiParseError):
         parse_midi(b"this is not a midi file at all")
-
-
-def test_simultaneous_onsets_are_polyphonic():
-    data = melody_midi([(64, 0, 240), (67, 0, 240), (71, 240, 240)])
-    parsed = parse_midi(data)
-    notes = select_notes(parsed).notes
-    with pytest.raises(PolyphonicInputError) as excinfo:
-        from muscriptor.guitar_arrangement import check_monophonic
-
-        check_monophonic(notes)
-    error = excinfo.value
-    assert error.details["tick"] == 0
-    assert error.details["pitches"] == [64, 67]
-    assert "monophonic" in str(error)
-
-
-def test_overlapping_durations_are_not_polyphony():
-    # The second note starts before the first one ends (legato / ringing):
-    # distinct onsets, so this is a legal monophonic line.
-    data = melody_midi([(64, 0, 480), (67, 240, 240)])
-    parsed = parse_midi(data)
-    notes = select_notes(parsed).notes
-    from muscriptor.guitar_arrangement import check_monophonic
-
-    check_monophonic(notes)  # must not raise
-    assert [n.onset_ticks for n in notes] == [0, 240]

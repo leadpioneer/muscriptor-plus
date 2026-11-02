@@ -76,6 +76,16 @@ def test_forbidden_ids_rejects_unknown_names(tokenizer):
         tokenizer.forbidden_token_ids(["violin", "kazoo"])
 
 
+def test_drum_group_does_not_rename_a_singleton_program(tokenizer):
+    """The learned drums group id doubles as the first singleton group (96)."""
+    from muscriptor.tokenizer.notes import DRUM_PROGRAM
+    from muscriptor.transcription_model import _build_instrument_for_program
+
+    lookup = _build_instrument_for_program(tokenizer)
+    assert lookup(DRUM_PROGRAM) == "drums"
+    assert lookup(96) == "program_96"
+
+
 # ---------------------------------------------------------------------------
 # LMModel.generate masking (tiny random model, CPU)
 # ---------------------------------------------------------------------------

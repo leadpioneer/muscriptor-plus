@@ -52,38 +52,3 @@ def sample_from_probs(
     if top_k > 0:
         return sample_top_k(probs, top_k)
     return multinomial(probs, num_samples=1)
-
-
-def sample_stratified(
-    probs: torch.Tensor,
-    special_token: int,
-    first_temp: float,
-    second_temp: float = 1.0,
-    top_p: float = 0.0,
-    top_k: int = 0,
-) -> torch.Tensor:
-    """Stratified sampling: first decide special vs. non-special, then sample among non-special."""
-    eps = 1e-12
-    probs_special = probs[..., special_token : special_token + 1].clamp(
-        min=eps, max=1 - eps
-    )
-    logits_two = torch.cat(
-        [torch.log(probs_special), torch.log(1 - probs_special)], dim=-1
-    )
-    logits_two = logits_two / max(first_temp, eps)
-    probs_two = torch.softmax(logits_two, dim=-1)
-    probs_special_temp = probs_two[..., 0:1]
-    next_token_is_special = torch.rand_like(probs_special_temp).lt(probs_special_temp)
-
-    denom = (1 - probs_special).clamp(min=eps)
-    new_probs = probs.clone() / denom
-    new_probs[..., special_token] = 0.0
-    if second_temp > 0:
-        log_new = torch.log(new_probs.clamp(min=eps)) / second_temp
-        new_probs = torch.softmax(log_new, dim=-1)
-
-    next_token = sample_from_probs(new_probs, top_p=top_p, top_k=top_k)
-
-    return torch.where(
-        next_token_is_special, torch.full_like(next_token, special_token), next_token
-    )

@@ -20,11 +20,14 @@ from .errors import (
     GuitarArrangementError,
     IncompatibleChordLocksError,
     InvalidArrangementError,
+    InvalidMaxFretError,
     InvalidMelodyPolicyError,
     InvalidOverridesError,
     MidiParseError,
     PolyphonicInputError,
     TooManyChordNotesError,
+    TooManyNotesError,
+    TooLongArrangementError,
     TrackNotFoundError,
     UnplayableChordError,
     UnplayableNoteError,
@@ -45,7 +48,6 @@ from .midi_input import (
     DRUM_CHANNEL,
     ParsedMidi,
     TrackInfo,
-    check_monophonic,
     parse_midi,
     select_notes,
 )
@@ -66,7 +68,6 @@ from .models import (
     MidiNote,
     Normalization,
     NoteEvent,
-    Phrase,
     PhraseSolution,
     PolyphonyAnalysis,
     SolverConfig,
@@ -77,7 +78,7 @@ from .models import (
 from .tab import arrangement_json_to_tab
 from .to_midi import arrangement_json_to_midi
 from .musicxml import arrangement_json_to_musicxml
-from .phrases import split_event_phrases, split_phrases
+from .phrases import split_event_phrases
 from .pipeline import arrange, arrange_solution
 from .serialization import OVERRIDES_VERSION, SCHEMA_VERSION, parse_overrides, to_json
 from .solver import (
@@ -85,11 +86,8 @@ from .solver import (
     chord_transition_cost,
     event_overlaps_others,
     explain_chord_lines,
-    explain_lines,
     solve_event_phrase,
     solve_event_phrases,
-    solve_phrase,
-    solve_phrases,
 )
 
 __all__ = [
@@ -114,6 +112,7 @@ __all__ = [
     "GuitarTuning",
     "IncompatibleChordLocksError",
     "InvalidArrangementError",
+    "InvalidMaxFretError",
     "InvalidMelodyPolicyError",
     "InvalidOverridesError",
     "MELODY_POLICIES",
@@ -123,7 +122,6 @@ __all__ = [
     "Normalization",
     "NoteEvent",
     "ParsedMidi",
-    "Phrase",
     "PhraseSolution",
     "PolyphonicInputError",
     "PolyphonyAnalysis",
@@ -132,6 +130,8 @@ __all__ = [
     "TempoEvent",
     "TimeSignatureEvent",
     "TooManyChordNotesError",
+    "TooManyNotesError",
+    "TooLongArrangementError",
     "TrackInfo",
     "TrackNotFoundError",
     "UnplayableChordError",
@@ -143,13 +143,11 @@ __all__ = [
     "arrangement_json_to_midi",
     "arrangement_json_to_musicxml",
     "arrangement_json_to_tab",
-    "check_monophonic",
     "chord_open_string_penalty",
     "chord_transition_cost",
     "detect_chord_labels",
     "event_overlaps_others",
     "explain_chord_lines",
-    "explain_lines",
     "generate_chord_shapes",
     "group_into_events",
     "normalize_to_tuning",
@@ -162,9 +160,6 @@ __all__ = [
     "select_notes",
     "solve_event_phrase",
     "solve_event_phrases",
-    "solve_phrase",
-    "solve_phrases",
     "split_event_phrases",
-    "split_phrases",
     "to_json",
 ]

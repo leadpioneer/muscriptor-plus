@@ -271,6 +271,116 @@ def test_invalid_documents_are_rejected():
         arrangement_json_to_musicxml("not a dict")
 
 
+def test_malformed_source_fields_are_rejected():
+    """A tempo of 0, string open_pitches, or offset<onset used to 500 or emit a
+    negative <duration>; they must be a clean invalid-arrangement."""
+    document = arrange(melody_midi([(60, 0, 480)]), filename="s.mid")
+    bad_tempo = {
+        **document,
+        "source": {**document["source"], "tempo_events": [{"tick": 0, "tempo": 0}]},
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_musicxml(bad_tempo)
+
+    bad_open = {
+        **document,
+        "instrument": {**document["instrument"], "open_pitches": "notalist"},
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_musicxml(bad_open)
+
+    bad_duration = {
+        **document,
+        "notes": [{**document["notes"][0], "onset_ticks": 480, "offset_ticks": 240}],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_musicxml(bad_duration)
+
+    bad_string = {
+        **document,
+        "notes": [{**document["notes"][0], "string": 99}],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_musicxml(bad_string)
+
+    bad_fret = {
+        **document,
+        "notes": [{**document["notes"][0], "fret": -3}],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_musicxml(bad_fret)
+
+    bad_pitch = {
+        **document,
+        "notes": [{**document["notes"][0], "pitch": 1000}],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_musicxml(bad_pitch)
+
+    bad_open_pitch = {
+        **document,
+        "instrument": {
+            **document["instrument"],
+            "open_pitches": [-5, 59, 55, 50, 45, 40],
+        },
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_musicxml(bad_open_pitch)
+
+
+def test_tempo_events_land_in_their_own_measures():
+    """Tempo events are bucketed by measure in one pass; a change in the
+    second measure must not be emitted (or dropped) in the first."""
+    document = arrange(melody_midi([(60, 0, 480), (62, 1920, 480)]), filename="s.mid")
+    document = {
+        **document,
+        "source": {
+            **document["source"],
+            "tempo_events": [
+                {"tick": 0, "tempo": 500000, "is_default": False},
+                {"tick": 1920, "tempo": 400000, "is_default": False},
+            ],
+        },
+    }
+    root = ET.fromstring(arrangement_json_to_musicxml(document))
+    measures = root.findall(".//measure")
+    assert len(measures) == 2
+    assert [m.find("direction/sound").get("tempo") for m in measures] == [
+        "120.0",
+        "150.0",
+    ]
+
+
+def test_absurdly_long_document_is_rejected():
+    """A huge offset_ticks would make _measure_boundaries walk millions of
+    measures; cap it (same limit as the tab grid)."""
+    document = arrange(melody_midi([(60, 0, 480)]), filename="s.mid")
+    broken = {
+        **document,
+        "notes": [{**document["notes"][0], "offset_ticks": 10**11}],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_musicxml(broken)
+
+
+def test_tiny_meter_is_rejected_by_measure_count():
+    """A 1/65536 bar is one tick long, so the tick limit alone would still
+    allow millions of measures; the measure cap must stop it."""
+    document = arrange(melody_midi([(60, 0, 480)]), filename="s.mid")
+    tiny_meter = {
+        **document,
+        "source": {
+            **document["source"],
+            "time_signature_events": [
+                {"tick": 0, "numerator": 1, "denominator": 65536}
+            ],
+        },
+        "notes": [{**document["notes"][0], "offset_ticks": 20_000}],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_musicxml(tiny_meter)
+
+
 def test_legacy_v2_document_is_supported():
     """Documented compatibility: v2 mono documents can be exported too."""
     document = {

@@ -114,6 +114,15 @@ def test_invalid_documents_are_rejected():
     }
     with pytest.raises(InvalidArrangementError):
         arrangement_json_to_midi(bad_offset)
+    bad_onset = {
+        "schema_version": 2,
+        "source": {"ticks_per_beat": 480, "program": 24, "track_name": "x"},
+        "notes": [
+            {"pitch": 60, "onset_ticks": -1, "offset_ticks": 10, "velocity": 100}
+        ],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_midi(bad_onset)
 
 
 # ---------------------------------------------------------------------------
@@ -207,3 +216,92 @@ def test_missing_tempo_is_a_marked_default_not_invented_bpm():
     meters = document["source"]["time_signature_events"]
     assert meters[0]["numerator"] == 4 and meters[0]["denominator"] == 4
     assert meters[0]["is_default"] is True
+
+
+def test_malformed_tempo_and_meter_are_rejected():
+    """A tempo of 0 or a string numerator used to 500 (mido / division by zero);
+    they must be a clean invalid-arrangement."""
+    document = _arrange()
+    bad_tempo = {
+        **document,
+        "source": {
+            **document["source"],
+            "tempo_events": [{"tick": 0, "tempo": 0, "is_default": False}],
+        },
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_midi(bad_tempo)
+
+    bad_meter = {
+        **document,
+        "source": {
+            **document["source"],
+            "time_signature_events": [
+                {"tick": 0, "numerator": "4", "denominator": 4, "is_default": False}
+            ],
+        },
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_midi(bad_meter)
+
+    negative_ticks = {
+        **document,
+        "source": {
+            **document["source"],
+            "tempo_events": [{"tick": -1, "tempo": 500000, "is_default": False}],
+            "time_signature_events": [
+                {"tick": -1, "numerator": 4, "denominator": 4, "is_default": False}
+            ],
+        },
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_midi(negative_ticks)
+
+
+@pytest.mark.parametrize(
+    "source_patch",
+    [
+        {"ticks_per_beat": 40000},  # MIDI header division is a signed 16-bit field
+        {"program": 300},  # program_change packs one byte
+        {"tempo_events": [{"tick": 0, "tempo": 100000000, "is_default": False}]},
+        {
+            "time_signature_events": [
+                {"tick": 0, "numerator": 1000, "denominator": 4, "is_default": False}
+            ]
+        },
+        {
+            "time_signature_events": [
+                {"tick": 0, "numerator": 4, "denominator": 1000, "is_default": False}
+            ]
+        },
+        {
+            "time_signature_events": [
+                {
+                    "tick": 0,
+                    "numerator": 4,
+                    "denominator": 4,
+                    "clocks_per_click": 1000,
+                    "is_default": False,
+                }
+            ]
+        },
+        {
+            "time_signature_events": [
+                {
+                    "tick": 0,
+                    "numerator": 4,
+                    "denominator": 4,
+                    "notated_32nd_notes_per_beat": 1000,
+                    "is_default": False,
+                }
+            ]
+        },
+    ],
+)
+def test_out_of_range_source_fields_are_rejected(source_patch):
+    """Values past the MIDI field widths used to surface as mido's
+    struct.error/ValueError (HTTP 500); they must be a clean invalid-arrangement."""
+    document = _arrange()
+    bad = {**document, "source": {**document["source"], **source_patch}}
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_midi(bad)

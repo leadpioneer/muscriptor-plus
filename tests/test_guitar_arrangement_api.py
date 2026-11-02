@@ -289,6 +289,18 @@ def test_result_is_serialization_stable():
     assert first == second
 
 
+def test_arrangement_response_is_gzipped():
+    """The per-note fingering tables make the document several MB; gzip cuts
+    the wire size roughly tenfold."""
+    resp = _client().post(
+        "/arrange/guitar",
+        files={"file": ("song.mid", _SONG, "audio/midi")},
+        headers={"Accept-Encoding": "gzip"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("content-encoding") == "gzip"
+
+
 def test_melody_reduction_via_melody_form_field():
     # Two simultaneous onsets: kept by default, reduced only on request.
     data = melody_midi([(60, 0, 240), (67, 0, 240), (72, 240, 240)])
@@ -395,6 +407,17 @@ def test_arrangement_to_midi_endpoint_rejects_garbage():
     assert resp.status_code == 400
 
 
+def test_oversized_arrangement_document_is_rejected(monkeypatch):
+    import muscriptor.server as server
+
+    monkeypatch.setattr(server, "_ARRANGEMENT_MAX_BYTES", 8)
+    resp = _client().post(
+        "/arrange/guitar/midi",
+        files={"document": ("a.json", b'{"notes": []}', "application/json")},
+    )
+    assert resp.status_code == 413
+
+
 def test_arrangement_to_tab_endpoint_returns_text():
     arrange_resp = _post(_client())
     resp = _client().post(
@@ -408,3 +431,103 @@ def test_arrangement_to_tab_endpoint_returns_text():
     text = resp.text
     assert text.count("\n") == 5  # six string lines
     assert text.splitlines()[0].startswith("E4")
+
+
+def test_too_many_notes_gives_400():
+    """A huge track would pin the worker thread for minutes; cap it up front."""
+    from muscriptor.guitar_arrangement.pipeline import MAX_ARRANGEMENT_NOTES
+
+    data = melody_midi(
+        [(60, index * 2, 1) for index in range(MAX_ARRANGEMENT_NOTES + 1)]
+    )
+    resp = _post(_client(), data=data)
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "too_many_notes"
+
+
+def test_max_fret_out_of_range_gives_400():
+    """A huge max_fret used to blow up the fingering candidate sets and hang the
+    arranger; it must be refused at the API boundary."""
+    resp = _post(_client(), max_fret=200000)
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "invalid_max_fret"
+
+
+def test_download_with_non_ascii_filename_does_not_500():
+    """A non-Latin upload name used to crash Content-Disposition encoding (500);
+    the header must fall back to an ASCII name + RFC 5987 filename*."""
+    document = _post(_client()).json()
+    for endpoint, ok_ext in (
+        ("/arrange/guitar/midi", "mid"),
+        ("/arrange/guitar/musicxml", "musicxml"),
+    ):
+        resp = _client().post(
+            endpoint,
+            files={
+                "document": (
+                    "ноты.json",
+                    json.dumps(document).encode(),
+                    "application/json",
+                )
+            },
+        )
+        assert resp.status_code == 200
+        disposition = resp.headers["content-disposition"]
+        assert "attachment" in disposition
+        assert "filename*=UTF-8''" in disposition
+        assert ok_ext in disposition
+
+    from muscriptor.server import _attachment_header
+
+    assert _attachment_header('../bad"\r\nname', ".mid") == (
+        'attachment; filename="badname.mid"'
+    )
+
+
+def test_oversized_midi_upload_is_rejected():
+    """mido expands a MIDI ~100x in memory, so the 512 MB general limit let a
+    single file peak at tens of GB; MIDI uploads have their own small cap."""
+    import muscriptor.server as server
+
+    resp = _post(_client(), data=b"\x00" * (server._MIDI_MAX_BYTES + 1))
+    assert resp.status_code == 413
+
+
+def test_malformed_arrangement_shape_gives_400_not_500():
+    """A non-object source/instrument or a non-list meter map used to escape
+    as AttributeError/TypeError (500) in the converters."""
+    documents = (
+        {"schema_version": 3, "source": 3, "instrument": {}, "notes": []},
+        {"schema_version": 3, "source": {}, "instrument": 1.5, "notes": []},
+        {"schema_version": 3, "source": {"tempo_events": 5}, "instrument": {}},
+        {"schema_version": 3, "source": {"time_signature_events": 5}, "instrument": {}},
+    )
+    client = _client()
+    for path in (
+        "/arrange/guitar/midi",
+        "/arrange/guitar/tab",
+        "/arrange/guitar/musicxml",
+    ):
+        for document in documents:
+            resp = client.post(
+                path,
+                files={
+                    "document": (
+                        "a.json",
+                        json.dumps(document).encode(),
+                        "application/json",
+                    )
+                },
+            )
+            assert resp.status_code == 400, (path, document)
+            assert resp.json()["detail"]["code"] == "invalid_arrangement"
+
+
+def test_deeply_nested_arrangement_document_gives_400_not_500():
+    """200 KB of '[' raised RecursionError out of json.loads, i.e. a 500."""
+    resp = _client().post(
+        "/arrange/guitar/tab",
+        files={"document": ("a.json", b"[" * 200_000, "application/json")},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "invalid_arrangement"

@@ -346,6 +346,20 @@ def transcribe(
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1)
 
+    if auralize is not None:
+        # Both checked before the model loads: transcribing a song takes long
+        # enough that refusing the output mode afterwards would sting.
+        if format != OutputFormat.midi:
+            typer.echo("Error: --auralize requires --format midi", err=True)
+            raise typer.Exit(1)
+        if is_stdout:
+            typer.echo(
+                "Error: --auralize writes a separate file, so it cannot be used "
+                "with -o -. Pass a path with -o.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
     _device = None if device == "auto" else device
 
     # Vocal removal runs before the model loads: it fails fast and cheap, and
@@ -364,10 +378,6 @@ def transcribe(
     model = _load_model(model_path, _device, dtype)
 
     typer.echo(f"Transcribing {transcription_audio} …", err=True)
-
-    if auralize is not None and format != OutputFormat.midi:
-        typer.echo("Error: --auralize requires --format midi", err=True)
-        raise typer.Exit(1)
 
     kwargs = dict(
         audio=transcription_audio,
@@ -410,7 +420,7 @@ def transcribe(
             typer.echo(
                 "Re-run with --format json to inspect the event stream.", err=True
             )
-        if auralize is not None and not is_stdout:
+        if auralize is not None:
             from muscriptor.utils.auralization import auralize as do_auralize
 
             typer.echo(f"Auralizing → {auralize} …", err=True)

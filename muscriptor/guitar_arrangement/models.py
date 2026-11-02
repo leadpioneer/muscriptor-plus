@@ -64,11 +64,6 @@ class GuitarTuning:
         """Lowest playable pitch: the lowest open string."""
         return min(self.open_pitches)
 
-    @property
-    def high_pitch(self) -> int:
-        """Highest playable pitch: lowest string + max fret (set per config)."""
-        return max(self.open_pitches)
-
 
 @dataclass(frozen=True)
 class FingeringState:
@@ -100,14 +95,6 @@ class AssignedNote:
     legal_positions: tuple[FretPosition, ...]
     legal_fingerings: tuple[FingeringState, ...]
     locked: bool = False
-
-
-@dataclass(frozen=True)
-class Phrase:
-    """A maximal run of notes optimized independently of the other phrases."""
-
-    index: int
-    notes: tuple[MidiNote, ...]
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,6 @@ from muscriptor.utils.sampling import (
     multinomial,
     sample_top_k,
     sample_top_p,
-    sample_stratified,
 )
 
 
@@ -79,22 +78,3 @@ def test_sample_top_p_within_vocab():
     probs = torch.softmax(torch.randn(1, 20), dim=-1)
     out = sample_top_p(probs, p=0.95, num_samples=10)
     assert (out >= 0).all() and (out < 20).all()
-
-
-def test_sample_stratified_returns_special_when_mass_concentrated():
-    special = 5
-    vocab = 10
-    # Put almost all mass on the special token.
-    logits = torch.full((1, vocab), -10.0)
-    logits[0, special] = 10.0
-    probs = torch.softmax(logits, dim=-1)
-    results = torch.cat(
-        [sample_stratified(probs, special, first_temp=1.0) for _ in range(50)]
-    )
-    assert (results == special).all(), "should almost always pick the special token"
-
-
-def test_sample_stratified_shape():
-    probs = torch.softmax(torch.randn(2, 12), dim=-1)
-    out = sample_stratified(probs, special_token=0, first_temp=1.0)
-    assert out.shape == (2, 1)

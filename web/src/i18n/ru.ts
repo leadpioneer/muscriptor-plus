@@ -258,7 +258,7 @@ export const RU: Dict = {
   guitar_play: "Прослушать",
   guitar_pause: "Пауза",
   guitar_play_title:
-    "Проигрывание на условных 120 BPM — в документе нет карты темпов.",
+    "Проигрывание в темпе документа (120 BPM, если карты темпов нет).",
   guitar_download_midi: "Скачать arrangement.mid",
   guitar_tab_button: "Табулатура",
   guitar_tab_title: "Табулатура (сетка 16-х, черты каждые 4 доли)",

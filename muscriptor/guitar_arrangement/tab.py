@@ -17,6 +17,12 @@ BEATS_PER_BAR = 4
 STEPS_PER_BEAT = 4
 PITCH_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
+# Upper bound on the tab grid's width (one column per 16th note). A document
+# with a bogus huge offset_ticks would otherwise allocate a grid with millions
+# of columns; 100k columns is ~3.5 hours of 16ths at 120 BPM — far beyond any
+# real arrangement, but bounded.
+_MAX_TAB_STEPS = 100_000
+
 
 def _pitch_name(pitch: int) -> str:
     return PITCH_NAMES[pitch % 12] + str(pitch // 12 - 1)
@@ -41,8 +47,17 @@ def arrangement_json_to_tab(document) -> str:
     if not isinstance(notes, list) or not notes:
         raise InvalidArrangementError("arrangement document has no notes")
     open_pitches = instrument.get("open_pitches")
-    if not isinstance(open_pitches, list) or not open_pitches:
-        raise InvalidArrangementError("arrangement document has no instrument strings")
+    if (
+        not isinstance(open_pitches, list)
+        or not open_pitches
+        or not all(
+            isinstance(p, int) and not isinstance(p, bool) and 0 <= p <= 127
+            for p in open_pitches
+        )
+    ):
+        raise InvalidArrangementError(
+            "arrangement document has no valid instrument strings"
+        )
     tpb = source.get("ticks_per_beat")
     if not isinstance(tpb, int) or isinstance(tpb, bool) or tpb <= 0:
         raise InvalidArrangementError("'ticks_per_beat' must be a positive integer")
@@ -53,8 +68,26 @@ def arrangement_json_to_tab(document) -> str:
             f"ticks_per_beat {tpb} is too small for a 16th-note grid"
         )
 
-    total_ticks = max(note["offset_ticks"] for note in notes if isinstance(note, dict))
+    # Validate every note's mandatory int fields up front. offset_ticks was
+    # previously read before any per-note validation, so a note missing it
+    # surfaced as a KeyError (500) instead of a clean 400.
+    offsets = []
+    for index, note in enumerate(notes):
+        if not isinstance(note, dict):
+            raise InvalidArrangementError(f"note #{index} is not an object")
+        offset = note.get("offset_ticks")
+        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+            raise InvalidArrangementError(
+                f"note #{index}: 'offset_ticks' must be a non-negative integer"
+            )
+        offsets.append(offset)
+    total_ticks = max(offsets)
     total_steps = total_ticks // step_ticks + 1
+    if total_steps > _MAX_TAB_STEPS:
+        raise InvalidArrangementError(
+            f"arrangement is too long to render as tab: {total_steps} columns "
+            f"exceeds the {_MAX_TAB_STEPS} column limit"
+        )
 
     # grid[string][step] = fret label
     grid: dict[int, list[str]] = {
@@ -66,11 +99,21 @@ def arrangement_json_to_tab(document) -> str:
         string = note.get("string")
         fret = note.get("fret")
         onset = note.get("onset_ticks")
-        for name, value in (("string", string), ("fret", fret), ("onset_ticks", onset)):
+        pitch = note.get("pitch")
+        for name, value in (
+            ("pitch", pitch),
+            ("string", string),
+            ("fret", fret),
+            ("onset_ticks", onset),
+        ):
             if not isinstance(value, int) or isinstance(value, bool):
                 raise InvalidArrangementError(
                     f"note #{index}: {name!r} must be an integer"
                 )
+        if not 0 <= pitch <= 127:
+            raise InvalidArrangementError(
+                f"note #{index}: pitch {pitch} is outside 0..127"
+            )
         if not 1 <= string <= len(open_pitches):
             raise InvalidArrangementError(
                 f"note #{index}: string {string} is outside 1..{len(open_pitches)}"
@@ -78,6 +121,12 @@ def arrangement_json_to_tab(document) -> str:
         if not 0 <= fret <= 99:
             raise InvalidArrangementError(
                 f"note #{index}: fret {fret} does not fit the tab grid"
+            )
+        offset = offsets[index]
+        if onset < 0 or onset > offset:
+            raise InvalidArrangementError(
+                f"note #{index}: onset_ticks {onset} is outside 0..{offset} "
+                f"(its offset_ticks)"
             )
         step = onset // step_ticks
         grid[string][step] = _fret_label(fret)

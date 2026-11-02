@@ -130,15 +130,17 @@ export function ModelSwitcher() {
           {t("model_unload")}
         </button>
       )}
+      {(status === "error" || error) && (
+        <span
+          className="max-w-48 truncate text-xs text-red"
+          role="alert"
+          title={error ?? ""}
+        >
+          {status === "error" ? t("model_error") : error}
+        </span>
+      )}
       {status === "error" && (
         <>
-          <span
-            className="text-xs text-red"
-            role="alert"
-            title={error ?? ""}
-          >
-            {t("model_error")}
-          </span>
           <button
             type="button"
             className="shrink-0 cursor-pointer rounded-md border border-line-strong px-1.5 py-0.5 text-xs text-content outline-none transition-colors duration-150 hover:border-accent hover:text-accent"

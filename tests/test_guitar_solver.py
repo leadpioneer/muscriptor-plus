@@ -1,27 +1,15 @@
-"""Unit tests for phrase splitting, the ergonomic DP solver (v2), locks and
-serialization.
-
-No real tuning is needed for the DP-behaviour tests: solve_phrase accepts
-synthetic `FingeringState` candidate lists, so the tests exercise the dynamic
-programming itself rather than the fretboard generator. The v1 solver's
-transition cost survives only as a test reference (`v1_reference.py`).
-"""
+"""Unit tests for the chord (event) solver, locks and serialization."""
 
 import json
 
 import pytest
 
 from muscriptor.guitar_arrangement import (
-    FingeringState,
-    FretPosition,
     InvalidOverridesError,
     MidiNote,
     STANDARD_TUNING,
     SolverConfig,
-    UnplayableNoteError,
     arrange,
-    solve_phrase,
-    split_phrases,
 )
 
 from .midi_build import melody_midi
@@ -37,126 +25,6 @@ def _note(index, pitch, onset, duration):
         offset_ticks=onset + duration,
         velocity=100,
     )
-
-
-def _closed(string, fret, finger=None):
-    """A closed-note state; hand_position derived from the finger."""
-    if finger is None:
-        finger = 1
-    return FingeringState(
-        position=FretPosition(string=string, fret=fret),
-        hand_position=fret - finger + 1,
-        finger=finger,
-    )
-
-
-def _open(string):
-    return FingeringState(
-        position=FretPosition(string=string, fret=0), hand_position=1, finger=0
-    )
-
-
-# --- Phrase splitting ------------------------------------------------------
-
-
-def test_gap_longer_than_threshold_starts_a_new_phrase():
-    # 480 ticks_per_beat, threshold 1.0 beat = 480 ticks.
-    notes = (
-        _note(0, 64, 0, 240),
-        _note(1, 67, 720, 240),  # gap 480 → new phrase
-        _note(2, 71, 960, 240),  # gap 0 → same phrase
-    )
-    phrases = split_phrases(notes, ticks_per_beat=480, phrase_gap_beats=1.0)
-    assert [len(p.notes) for p in phrases] == [1, 2]
-    assert [p.index for p in phrases] == [0, 1]
-
-
-def test_short_gap_keeps_one_phrase():
-    notes = (
-        _note(0, 64, 0, 240),
-        _note(1, 67, 480, 240),  # gap 240 < 480
-    )
-    phrases = split_phrases(notes, 480, 1.0)
-    assert len(phrases) == 1
-
-
-def test_negative_gap_from_overlap_counts_as_zero():
-    notes = (
-        _note(0, 64, 0, 960),
-        _note(1, 67, 240, 240),  # onset inside the previous note
-    )
-    phrases = split_phrases(notes, 480, 1.0)
-    assert len(phrases) == 1
-
-
-# --- DP solver -------------------------------------------------------------
-
-
-def _candidates(*specs):
-    return tuple(tuple(spec) for spec in specs)
-
-
-def test_dp_moves_early_notes_to_avoid_a_late_jump():
-    """The spec's key scenario, kept from v1 but now checked on hand_position:
-    the phrase ends where only a high hand position works, and the solver must
-    place the *early* notes up there too instead of playing low and shifting."""
-    config = SolverConfig()
-    notes = (
-        _note(0, 60, 0, 50),
-        _note(1, 62, 100, 50),
-        _note(2, 64, 200, 50),
-    )
-    # Early notes: index finger at hand position 2 (cheap) or 7; the last
-    # note is only reachable with the hand at position 7.
-    candidates = _candidates(
-        (_closed(1, 2, finger=1), _closed(1, 7, finger=1)),
-        (_closed(1, 2, finger=1), _closed(1, 7, finger=1)),
-        (_closed(1, 7, finger=1),),
-    )
-    solution = solve_phrase(notes, candidates, config, ticks_per_beat=480)
-    assert [a.state.hand_position for a in solution.assigned] == [7, 7, 7]
-    assert solution.cost == 0.0
-
-
-def test_four_neighbouring_frets_need_no_hand_shift():
-    """Regression for the v1 defect: frets n, n+1, n+2, n+3 under fingers
-    1–4 are one hand position — not four shifts (nor 'free crawling')."""
-    config = SolverConfig()
-    notes = tuple(_note(i, 60 + i, i * 100, 50) for i in range(4))
-    candidates = _candidates(
-        (_closed(2, 5, finger=1),),
-        (_closed(2, 6, finger=2),),
-        (_closed(2, 7, finger=3),),
-        (_closed(2, 8, finger=4),),
-    )
-    solution = solve_phrase(notes, candidates, config, ticks_per_beat=480)
-    assert {a.state.hand_position for a in solution.assigned} == {5}
-    assert [a.state.finger for a in solution.assigned] == [1, 2, 3, 4]
-    assert solution.cost == 0.0
-
-
-def test_ties_are_broken_deterministically():
-    config = SolverConfig()
-    notes = (_note(0, 60, 0, 50), _note(1, 60, 100, 50))
-    # Two symmetric states per note; with equal keys the first candidate in
-    # the (sorted) list wins.
-    candidates = _candidates(
-        (_closed(1, 3, finger=1), _closed(2, 3, finger=1)),
-        (_closed(1, 3, finger=1), _closed(2, 3, finger=1)),
-    )
-    first = solve_phrase(notes, candidates, config, ticks_per_beat=480)
-    second = solve_phrase(notes, candidates, config, ticks_per_beat=480)
-    assert [a.state for a in first.assigned] == [
-        _closed(1, 3, finger=1),
-        _closed(1, 3, finger=1),
-    ]
-    assert [a.state for a in first.assigned] == [a.state for a in second.assigned]
-
-
-def test_empty_candidates_are_an_error_not_a_crash():
-    notes = (_note(0, 60, 0, 50),)
-    with pytest.raises(UnplayableNoteError):
-        solve_phrase(notes, _candidates(()), SolverConfig(), ticks_per_beat=480)
 
 
 # --- Locks (through the pipeline) ------------------------------------------
@@ -335,18 +203,6 @@ def test_run_beyond_four_frets_shifts_or_crosses_explicitly():
         assert metrics["total_hand_position_travel"] >= 2
     # Either way, the movement is visible in the dedicated metrics.
     assert metrics["position_change_count"] >= 1 or metrics["total_string_travel"] >= 1
-
-
-def test_explain_lines_summarize_phrases():
-    from muscriptor.guitar_arrangement import arrange_solution, explain_lines
-
-    solution = arrange_solution(melody_midi(_MELODIES[0]), filename="song.mid")
-    lines = explain_lines(solution)
-    assert len(lines) == len(solution.phrases)
-    assert "pitch 64–71" in lines[0]
-    assert "hand positions" in lines[0]
-    assert "position changes" in lines[0]
-    assert "cost" in lines[0]
 
 
 def test_thousands_of_notes_are_handled_quickly_enough():

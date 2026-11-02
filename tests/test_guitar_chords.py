@@ -336,6 +336,20 @@ def test_candidate_cap_is_reported_honestly():
         assert event["optimal_within"] == "retained_candidates"
 
 
+def test_dense_onset_is_reduced_without_exhaustive_search():
+    """A pathological many-note onset must not blow up the C(n,6) subset
+    search: the arranger returns a bounded playable subset instead of hanging."""
+    document = arrange(
+        melody_midi([(pitch, 0, 480) for pitch in range(40, 80)]),
+        filename="dense.mid",
+    )
+    assert 1 <= document["metrics"]["note_count"] <= 6
+    assert document["chord_reductions"]  # the 40-note onset was reduced
+    for note in document["notes"]:
+        open_pitch = document["instrument"]["open_pitches"][note["string"] - 1]
+        assert open_pitch + note["fret"] == note["pitch"]
+
+
 def test_arrangement_is_byte_stable_v3():
     data = melody_midi([(p, 0, 480) for p in E_MAJOR])
     first = arrange(data, filename="s.mid")

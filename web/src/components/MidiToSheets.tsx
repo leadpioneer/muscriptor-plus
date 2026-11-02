@@ -4,17 +4,7 @@ import { Button } from "./Button";
 import { SheetsDialog, type SheetFile } from "./SheetsDialog";
 import { useI18n } from "../i18n";
 import { track } from "../analytics";
-
-/** The FastAPI `detail` of a failed response, or its raw body if it isn't one. */
-async function errorDetail(resp: Response): Promise<string> {
-  const text = await resp.text();
-  try {
-    return JSON.parse(text).detail ?? text;
-  } catch {
-    // not JSON — keep the raw body
-    return text;
-  }
-}
+import { errorDetail } from "../http";
 
 /**
  * "Engrave a MIDI file you already have" path, on the welcome screen.

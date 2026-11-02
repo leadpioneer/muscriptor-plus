@@ -89,3 +89,54 @@ def test_invalid_documents_are_rejected():
     }
     with pytest.raises(InvalidArrangementError):
         arrangement_json_to_tab(bad_string)
+    bad_pitch = {
+        **BASE,
+        "notes": [{**BASE["notes"][0], "pitch": 1000}],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_tab(bad_pitch)
+    bad_open = {**BASE, "instrument": {**BASE["instrument"], "open_pitches": [200]}}
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_tab(bad_open)
+
+
+def test_missing_offset_ticks_is_rejected_not_a_500():
+    """A note without offset_ticks used to crash with a KeyError (surfacing as
+    a 500) before any validation — it must be a clean invalid-arrangement."""
+    broken = {
+        **BASE,
+        "notes": [{k: v for k, v in BASE["notes"][0].items() if k != "offset_ticks"}],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_tab(broken)
+
+
+def test_absurdly_long_document_is_rejected():
+    """A huge offset_ticks would allocate a giant grid; cap it instead."""
+    huge = {
+        **BASE,
+        "notes": [{**BASE["notes"][0], "offset_ticks": 10**18}],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_tab(huge)
+
+
+def test_negative_onset_is_rejected():
+    """A negative onset used to index the grid from the end (wrong tab, no
+    error); it must be a clean invalid-arrangement."""
+    broken = {
+        **BASE,
+        "notes": [{**BASE["notes"][0], "onset_ticks": -1}],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_tab(broken)
+
+
+def test_onset_after_offset_is_rejected():
+    """onset > offset used to IndexError the grid (a 500); reject it instead."""
+    broken = {
+        **BASE,
+        "notes": [{**BASE["notes"][0], "onset_ticks": 480, "offset_ticks": 240}],
+    }
+    with pytest.raises(InvalidArrangementError):
+        arrangement_json_to_tab(broken)

@@ -258,7 +258,7 @@ export const EN: Dict = {
   guitar_play: "Listen",
   guitar_pause: "Pause",
   guitar_play_title:
-    "Play the arrangement at a nominal 120 BPM (the document has no tempo map).",
+    "Play the arrangement at the document's tempo (120 BPM when it has no tempo map).",
   guitar_download_midi: "Download arrangement.mid",
   guitar_tab_button: "Tablature",
   guitar_tab_title: "Tabulature (16th-note grid, bar lines every 4 beats)",

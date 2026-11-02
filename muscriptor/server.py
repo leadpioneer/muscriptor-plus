@@ -49,11 +49,13 @@ import wave
 import zipfile
 from pathlib import Path
 from typing import Annotated, Callable, Literal
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
+from starlette.middleware.gzip import GZipMiddleware
 
 from muscriptor.accelerator import current_accelerator
 from muscriptor.events import NoteEndEvent, NoteStartEvent, ProgressEvent
@@ -72,6 +74,7 @@ from muscriptor.utils.download import download_if_necessary
 from muscriptor.utils.sheets import (
     MuseScoreError,
     MuseScoreNotFoundError,
+    _run,
     write_sheets,
 )
 
@@ -98,8 +101,268 @@ def _make_release_once(lock: threading.Lock):
 
 
 _MAX_TRANSCRIBE_MIDI_DURATION_S = 15 * 60
+# Comfortably above any 15-minute upload (the largest legitimate WAV is ~260 MB
+# at 48 kHz 24-bit stereo); stops a giant upload from being read into a bytes
+# object and decoded into an even larger float tensor.
+_MAX_UPLOAD_BYTES = 512 * 1024 * 1024
+# An arrangement document is well under a megabyte even at the note cap;
+# parsing a 512 MB one into Python objects would take gigabytes.
+_ARRANGEMENT_MAX_BYTES = 16 * 1024 * 1024
+# MIDI uploads are a few hundred KB even for a long song (5000 notes is ~40 KB).
+# Capping them at a few MB stops parallel /auralize, /sheets or /arrange
+# requests from each holding a 512 MB bytes object before the render lock is
+# even taken, and keeps mido's ~100x in-memory expansion bounded.
+_MIDI_MAX_BYTES = 2 * 1024 * 1024
+# Body caps, keyed by endpoint. FastAPI parses the whole multipart body before
+# the handler runs, so the per-field `file.size` checks below only fire after
+# the body has already been spooled to disk. The middleware compares these
+# caps against the incoming stream and answers 413 before that happens; the
+# extra megabyte leaves room for the multipart boundaries and form fields.
+_MULTIPART_OVERHEAD_BYTES = 1024 * 1024
+_MAX_REQUEST_BYTES = _MAX_UPLOAD_BYTES + _MULTIPART_OVERHEAD_BYTES
+_UPLOAD_BODY_LIMITS = {
+    "/transcribe": _MAX_REQUEST_BYTES,
+    "/transcribe/midi": _MAX_REQUEST_BYTES,
+    "/auralize": _MAX_UPLOAD_BYTES + _MIDI_MAX_BYTES + _MULTIPART_OVERHEAD_BYTES,
+    "/sheets": _MIDI_MAX_BYTES + _MULTIPART_OVERHEAD_BYTES,
+    "/arrange/guitar": _MIDI_MAX_BYTES + _MULTIPART_OVERHEAD_BYTES,
+    "/arrange/guitar/midi": _ARRANGEMENT_MAX_BYTES + _MULTIPART_OVERHEAD_BYTES,
+    "/arrange/guitar/tab": _ARRANGEMENT_MAX_BYTES + _MULTIPART_OVERHEAD_BYTES,
+    "/arrange/guitar/musicxml": _ARRANGEMENT_MAX_BYTES + _MULTIPART_OVERHEAD_BYTES,
+    "/arrange/guitar/pdf": _ARRANGEMENT_MAX_BYTES + _MULTIPART_OVERHEAD_BYTES,
+    "/model": _MULTIPART_OVERHEAD_BYTES,
+}
+# 8 kHz is the lowest rate a codec produces, 768 kHz the highest libsndfile
+# reads. A bogus header rate (0, 1000003, …) used to divide by zero or make
+# the resampler allocate tens of GB.
+_MIN_SAMPLE_RATE = 8000
+_MAX_SAMPLE_RATE = 768000
+# FluidSynth synthesizes far faster than real time; this only caps a runaway
+# (e.g. a hostile MIDI whose ticks stretch to dozens of hours).
+_MAX_AURALIZE_MIDI_DURATION_S = 30 * 60
+# Seconds a concurrent /sheets, /arrange/guitar, or /auralize request waits in
+# line for the active job to finish before giving up with 503.
+_RENDER_LOCK_TIMEOUT_S = 30.0
 
 SHEETS_ZIP_NAME = "sheets.zip"
+# Already-compressed downloads bypass GZipMiddleware (a response that sets
+# Content-Encoding is passed through): re-gzipping a 38 MB soundfont or a
+# multi-hundred-MB WAV burns the event loop for seconds and stalls every
+# other request. Text (arrangement JSON, MusicXML, tab) stays compressed.
+_NO_GZIP = {"Content-Encoding": "identity"}
+
+
+def _attachment_header(stem: str, extension: str) -> str:
+    """Content-Disposition for a download named after a client-supplied stem.
+
+    Strips path segments, control characters (CR/LF), quotes and backslashes,
+    and falls back to an ASCII name + RFC 5987 `filename*` when non-ASCII.
+    """
+    base = Path(stem).name if stem else ""
+    clean = (
+        "".join(c for c in base if c >= " " and c not in ('"', "\\", ";")).strip()
+        or "arrangement"
+    )
+    try:
+        clean.encode("latin-1")
+    except UnicodeEncodeError:
+        return (
+            f'attachment; filename="arrangement{extension}"; '
+            f"filename*=UTF-8''{quote(clean + extension)}"
+        )
+    return f'attachment; filename="{clean}{extension}"'
+
+
+def _reject_bad_sample_rate(sr) -> None:
+    """Refuse a header sample rate that would break decoding or resampling."""
+    if not _MIN_SAMPLE_RATE <= sr <= _MAX_SAMPLE_RATE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"unsupported sample rate {sr}; "
+                f"expected {_MIN_SAMPLE_RATE}..{_MAX_SAMPLE_RATE} Hz"
+            ),
+        )
+
+
+def _decode_audio(data: bytes, filename: str | None) -> tuple:
+    """Decode an upload into `(wav, sr)`, WAV first then anything libsndfile reads.
+
+    Runs off the event loop (the stdlib WAV reader and soundfile both block).
+    An undecodable upload is the client's fault, so it is reported as a 400.
+    """
+    try:
+        wav, sr = _read_wav_file(io.BytesIO(data))
+    except (wave.Error, EOFError, ValueError):
+        try:
+            wav, sr = _read_non_wav_file(io.BytesIO(data))
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"could not decode audio file '{filename}': {e}",
+            ) from e
+    _reject_bad_sample_rate(sr)
+    return wav, sr
+
+
+def _reject_oversized_upload(file: UploadFile, limit: int = _MAX_UPLOAD_BYTES) -> None:
+    """Refuse an upload larger than `limit` before it is read.
+
+    `file.size` is filled by the multipart parser as the body spools to a temp
+    file, so checking it here costs nothing and stops a giant upload from being
+    loaded into a bytes object (and then decoded into an even larger float
+    tensor) by one or several parallel requests. The body itself is already
+    capped before parsing by `_UploadBodyLimit`.
+    """
+    if file.size is not None and file.size > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"upload is {file.size / (1024 * 1024):.0f} MB; "
+                f"the limit is {limit // (1024 * 1024)} MB"
+            ),
+        )
+
+
+async def _send_too_large(send, limit: int) -> None:
+    """Answer 413 before (or while) an over-limit body is parsed."""
+    body = json.dumps(
+        {"detail": f"request body exceeds the {limit // (1024 * 1024)} MB limit"}
+    ).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+class _UploadBodyLimit:
+    """Cap upload bodies before Starlette's multipart parser spools them.
+
+    FastAPI parses the whole body before the handler runs, so
+    `_reject_oversized_upload` alone lets one huge POST fill the host disk.
+    This counts bytes as they arrive — also for chunked bodies, which carry no
+    Content-Length — and answers 413 as soon as the path's cap is crossed.
+    """
+
+    def __init__(self, app, limits: dict[str, int]) -> None:
+        self.app = app
+        self.limits = limits
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http" or scope["method"] not in ("POST", "PUT", "PATCH"):
+            await self.app(scope, receive, send)
+            return
+        limit = self.limits.get(scope["path"], _MAX_REQUEST_BYTES)
+        declared = dict(scope["headers"]).get(b"content-length")
+        if declared is not None and declared.isdigit() and int(declared) > limit:
+            await _send_too_large(send, limit)
+            return
+        received = 0
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    # FastAPI turns this into its 413 response while parsing.
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"request body exceeds the "
+                            f"{limit // (1024 * 1024)} MB limit"
+                        ),
+                    )
+            return message
+
+        await self.app(scope, limited_receive, send)
+
+
+def _serialized(
+    lock: threading.Lock,
+    fn: Callable,
+    *args,
+    busy_detail: str = "server busy: another sheet render is in progress",
+    **kwargs,
+):
+    """Run `fn(*args, **kwargs)` under `lock`, waiting up to `_RENDER_LOCK_TIMEOUT_S`."""
+    if not lock.acquire(timeout=_RENDER_LOCK_TIMEOUT_S):
+        raise HTTPException(status_code=503, detail=busy_detail)
+    return _run_locked(lock, fn, *args, **kwargs)
+
+
+def _run_locked(lock: threading.Lock, fn: Callable, *args, **kwargs):
+    """Run `fn` and release a lock the caller already acquired.
+
+    Releasing from the worker thread (not the awaiting coroutine) keeps the
+    lock held if the request is cancelled while `fn` is still running.
+    """
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        lock.release()
+
+
+def _reject_long_audio(file: UploadFile, *, check_duration: bool = True) -> None:
+    """Validate audio header sample rate and (optionally) cap duration before decoding.
+
+    The underlying spooled file is seekable, so the header alone yields the
+    sample rate and duration without reading the samples into memory. WAV is
+    read with the stdlib; anything else (mp3, flac, ogg, m4a, …) is probed with
+    soundfile's `info` (header only). An undecodable upload passes through —
+    `_decode_audio` then reports it as a 400.
+    """
+    try:
+        file.file.seek(0)
+        try:
+            with wave.open(file.file, "rb") as wf:
+                sr = wf.getframerate()
+                n_frames = wf.getnframes()
+        except (wave.Error, EOFError, ValueError, OSError):
+            import soundfile as sf
+
+            info = sf.info(file.file)
+            sr = info.samplerate
+            n_frames = info.frames
+    except Exception:  # noqa: BLE001 — undecodable uploads are handled downstream
+        return
+    finally:
+        try:
+            file.file.seek(0)
+        except (OSError, ValueError):
+            pass
+    _reject_bad_sample_rate(sr)
+    if check_duration:
+        duration_s = n_frames / sr
+        if duration_s > _MAX_TRANSCRIBE_MIDI_DURATION_S:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"audio file is {duration_s / 60:.1f} minutes long; "
+                    f"the limit is {_MAX_TRANSCRIBE_MIDI_DURATION_S // 60:.0f} minutes"
+                ),
+            )
+
+
+def _midi_duration_s(midi_bytes: bytes) -> float | None:
+    """Duration of a MIDI file in seconds, or None if it can't be parsed.
+
+    An unparseable upload is left to the synthesis step, which reports it as a
+    500 the way any other bad MIDI already is.
+    """
+    from mido import MidiFile
+
+    try:
+        return MidiFile(file=io.BytesIO(midi_bytes)).length
+    except Exception:  # noqa: BLE001 — invalid MIDI is handled downstream
+        return None
 
 
 def engrave_to_zip(midi_bytes: bytes, quantized: bool = False) -> bytes:
@@ -121,6 +384,70 @@ def engrave_to_zip(midi_bytes: bytes, quantized: bool = False) -> bytes:
             for path in written:
                 archive.write(path, arcname=path.name)
         return buf.getvalue()
+
+
+def _engrave_arrangement_pdf(binary: str, xml_bytes: bytes, stem: str) -> bytes:
+    """Engrave one arrangement's MusicXML into a score PDF via MuseScore.
+
+    Runs headless through `sheets._run` (which sets the offscreen Qt platform
+    and a shared timeout) in a throwaway directory, then packs the PDF and the
+    intermediate MusicXML into a zip. Raises HTTPException(500) when MuseScore
+    runs but produces no usable PDF.
+    """
+    with tempfile.TemporaryDirectory(prefix="guitar_pdf_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        xml_path = tmp_path / f"{stem}.musicxml"
+        xml_path.write_bytes(xml_bytes)
+        pdf_path = tmp_path / f"{stem}.pdf"
+        proc = _run(binary, ["-o", str(pdf_path), str(xml_path)])
+        if not pdf_path.is_file() or pdf_path.stat().st_size == 0:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "fingering_export_failed",
+                    "message": (
+                        "MuseScore ran but produced no PDF for this arrangement"
+                    ),
+                    "details": {"stderr": (proc.stderr or "")[-2000:]},
+                },
+            )
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.write(pdf_path, "full_score.pdf")
+            archive.write(xml_path, f"{stem}.musicxml")
+        return buffer.getvalue()
+
+
+def _render_auralize(mode: str, midi_data: bytes, audio: UploadFile | None) -> bytes:
+    """Write the uploads to scratch files, render the WAV and read it back.
+
+    Runs in a worker thread under `auralize_lock`, so the (up to 512 MB) audio
+    upload is spooled to disk only by the request actually being rendered —
+    parallel requests are refused with a 503 before they read anything.
+    """
+    from muscriptor.utils.auralization import auralize as do_auralize
+    from muscriptor.utils.auralization import synthesize
+
+    with tempfile.TemporaryDirectory(prefix="muscriptor-auralize-") as tmp:
+        midi_path = os.path.join(tmp, "input.mid")
+        with open(midi_path, "wb") as f:
+            f.write(midi_data)
+        out_path = os.path.join(tmp, "output.wav")
+        if mode == "synth":
+            synthesize(midi_path=midi_path, output_path=out_path)
+        else:
+            assert audio is not None  # the endpoint refuses mix without audio
+            suffix = Path(audio.filename or "audio.wav").suffix.lower() or ".wav"
+            audio_path = os.path.join(tmp, "audio" + suffix)
+            with open(audio_path, "wb") as f:
+                shutil.copyfileobj(audio.file, f)
+            do_auralize(
+                midi_path=midi_path,
+                original_audio_path=audio_path,
+                output_path=out_path,
+            )
+        with open(out_path, "rb") as f:
+            return f.read()
 
 
 def event_to_dict(ev: NoteStartEvent | NoteEndEvent) -> dict:
@@ -148,6 +475,15 @@ def create_app(
     idle_unload_s: float | None = None,
 ) -> FastAPI:
     app = FastAPI(title="muscriptor")
+    # Reject an over-limit upload while it is still arriving (see
+    # `_UploadBodyLimit`); the per-field checks in the handlers stay as a
+    # backstop.
+    app.add_middleware(_UploadBodyLimit, limits=_UPLOAD_BODY_LIMITS)
+    # Arrangement documents are several MB of per-note fingering tables; gzip
+    # cuts the wire size roughly tenfold. The middleware skips SSE itself.
+    # shortcut: the dialog still re-fetches the whole document on every click;
+    # upgrade to a per-note legal-table endpoint if that latency ever matters.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
     # Optional preprocessing (lead-vocal removal). The factory is only ever
     # called when a request actually asks for preprocessing, and the default
@@ -187,12 +523,9 @@ def create_app(
             raise
         return result, run_dir
 
-    def _stems_payload(run_id: str) -> dict:
-        """Download URLs for a run's registered stems."""
-        return {
-            "vocals": f"/stems/{run_id}/vocals",
-            "instrumental": f"/stems/{run_id}/instrumental",
-        }
+    def _stems_payload(run_id: str, produced: dict[str, Path]) -> dict:
+        """Download URLs for the stems this run actually registered."""
+        return {stem: f"/stems/{run_id}/{stem}" for stem in produced}
 
     # ---- Model unloading (free VRAM while the server sits idle) -----------
     # The loaded model keeps its weights resident in GPU memory even when
@@ -247,6 +580,13 @@ def create_app(
         transcription. Weights come from the local cache — seconds, no network.
         """
         last_model_use[0] = time.monotonic()
+        # A /model swap is in flight: the old weights are still live, but a
+        # transcription started now would run on them while the loader frees
+        # their memory. This backstops the pre-lock check in
+        # acquire_transcribe_lock against the narrow window before the lock is
+        # actually acquired (the handler maps this to an error/503).
+        if model_state["status"] == "loading":
+            raise RuntimeError("a model is being loaded; try again shortly")
         if model_state["model"] is not None:
             return model_state["model"]
         model_state["status"] = "loading"
@@ -268,16 +608,27 @@ def create_app(
                 try:
                     if (
                         time.monotonic() - last_model_use[0] >= idle_unload_s
-                        and not transcribe_lock.locked()
                         and model_state["status"] == "ready"
                         and model_state["model"] is not None
+                        and transcribe_lock.acquire(blocking=False)
                     ):
-                        logger = logging.getLogger("muscriptor.server")
-                        logger.info(
-                            "server idle for %.0fs — unloading the model to free VRAM",
-                            idle_unload_s,
-                        )
-                        _drop_model()
+                        try:
+                            # Re-check under the lock: a request that started
+                            # while we were deciding must keep its model.
+                            if (
+                                time.monotonic() - last_model_use[0] >= idle_unload_s
+                                and model_state["status"] == "ready"
+                                and model_state["model"] is not None
+                            ):
+                                logger = logging.getLogger("muscriptor.server")
+                                logger.info(
+                                    "server idle for %.0fs — unloading the model "
+                                    "to free VRAM",
+                                    idle_unload_s,
+                                )
+                                _drop_model()
+                        finally:
+                            transcribe_lock.release()
                 except Exception:  # noqa: BLE001 — the watcher must never die
                     continue
 
@@ -295,6 +646,20 @@ def create_app(
     }
 
     transcribe_lock = threading.Lock()
+    # MuseScore engraving is process-heavy (each render spawns a full MuseScore
+    # process), so /sheets and /arrange/guitar/pdf serialize behind this lock
+    # instead of letting N parallel requests spawn N processes. A second render
+    # is refused with 503 rather than queueing a worker thread (see
+    # `_serialized`).
+    musescore_lock = threading.Lock()
+    # One arrangement at a time: the solver is pure CPU (seconds per song) and
+    # a handful of parallel uploads would otherwise occupy the whole thread
+    # pool. Contenders get an immediate 503 instead of queueing a thread.
+    arrange_lock = threading.Lock()
+    # FluidSynth keeps a whole rendered mix in RAM (hundreds of MB) and spawns
+    # its own process, so /auralize is serialized the same way. A second render
+    # is refused at once rather than queueing behind the first.
+    auralize_lock = threading.Lock()
     # State of the run currently holding the lock (or the last one to have held
     # it), guarded by `cancel_guard`: its cancel event and the id of the client
     # that started it. A new /transcribe from the SAME client (a resubmit in
@@ -333,6 +698,14 @@ def create_app(
         render, which can't be stopped mid-flight); `release` frees the lock at
         most once, from whichever cleanup path runs first.
         """
+        # Refuse while a model swap is loading: a transcription would run on the
+        # outgoing weights while the loader frees their memory. The same 409 the
+        # API documents for a second /model during a swap.
+        if model_state["status"] == "loading":
+            raise HTTPException(
+                status_code=409,
+                detail="a model is being loaded; try again shortly",
+            )
         nonlocal current_cancel, current_client
         deadline: float | None = None
         while True:
@@ -391,7 +764,9 @@ def create_app(
         event loop keeps serving) and cached locally.
         """
         path = await asyncio.to_thread(download_if_necessary, SF3_URL)
-        return FileResponse(path, media_type="application/octet-stream")
+        return FileResponse(
+            path, media_type="application/octet-stream", headers=_NO_GZIP
+        )
 
     @app.post("/transcribe")
     async def transcribe(
@@ -404,23 +779,8 @@ def create_app(
         remove_vocals: Annotated[bool, Form()] = False,
         x_client_id: Annotated[str | None, Header()] = None,
     ) -> StreamingResponse:
-        data = await file.read()
-        # PCM WAV goes through the stdlib reader (keeps WAV decoding byte-for-byte
-        # identical to the CLI); anything that isn't a readable WAV (mp3, flac,
-        # ogg, m4a, …) falls back to soundfile/libsndfile. A genuinely
-        # undecodable upload (corrupt/truncated file, or a format libsndfile
-        # can't read) is the client's fault, so report it as a 400 rather than
-        # letting it surface as a 500.
-        try:
-            wav, sr = _read_wav_file(io.BytesIO(data))
-        except (wave.Error, EOFError):
-            try:
-                wav, sr = _read_non_wav_file(io.BytesIO(data))
-            except Exception as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"could not decode audio file '{file.filename}': {e}",
-                ) from e
+        _reject_oversized_upload(file)
+        _reject_long_audio(file, check_duration=False)
 
         unknown = [n for n in instruments if n not in MT3_FULL_PLUS_GROUP_NAMES]
         if unknown:
@@ -429,16 +789,30 @@ def create_app(
                 detail=f"unknown instrument name(s): {', '.join(unknown)}",
             )
 
-        # Acquire the single-transcription lock, preempting only a resubmit from
-        # this same client (see acquire_transcribe_lock). `release_lock` runs
-        # from whichever cleanup path fires first: the generator's finally
-        # (normal completion, errors, mid-stream disconnects) or the
-        # StreamingResponse background task (client disconnects before the
-        # generator is ever iterated, so its finally would never run) — either
-        # way the lock is released exactly once and never leaked.
+        # Acquire the single-transcription lock before reading or decoding the
+        # upload: a 15-minute stereo file decodes to ~350 MB of float32, so
+        # parallel uploads must not decode concurrently while the server
+        # promises one transcription at a time. `release_lock` runs from
+        # whichever cleanup path fires first: the generator's finally (normal
+        # completion, errors, mid-stream disconnects), the StreamingResponse
+        # background task (client disconnects before the generator is ever
+        # iterated, so its finally would never run), or the except below when
+        # validation fails before the response exists — either way the lock is
+        # released exactly once and never leaked.
         cancel, release_lock = await acquire_transcribe_lock(
             x_client_id, cancellable=True
         )
+        try:
+            data = await file.read()
+            # PCM WAV goes through the stdlib reader (keeps WAV decoding
+            # byte-for-byte identical to the CLI); anything that isn't a
+            # readable WAV (mp3, flac, ogg, m4a, …) falls back to
+            # soundfile/libsndfile. Decoding blocks, so it runs in a worker
+            # thread (see _decode_audio for the 400 on bad input).
+            wav, sr = await asyncio.to_thread(_decode_audio, data, file.filename)
+        except BaseException:
+            release_lock()
+            raise
 
         def gen():
             try:
@@ -456,6 +830,7 @@ def create_app(
                 # both the note decoding and the beat-grid detection below run
                 # on the same audio.
                 transcription_wav = wav
+                transcription_sr = sr
                 run_id: str | None = None
                 stems_payload: dict | None = None
                 if remove_vocals:
@@ -474,54 +849,60 @@ def create_app(
                         yield _sse({"type": "error", "detail": str(e)})
                         return
                     yield _sse({"type": "stage", "stage": "instrumental"})
-                    transcription_wav, _ = _read_non_wav_file(
+                    # audio-separator writes stems at 44.1 kHz regardless of the
+                    # upload's rate, so the stem's own sample rate must ride
+                    # along — using the original sr would stretch the note
+                    # times and skew the BPM.
+                    transcription_wav, transcription_sr = _read_non_wav_file(
                         result.audio_for_transcription
                     )
                     run_id = run_dir_.name.removeprefix("muscriptor-stems-")
-                    stems.register(
-                        run_id,
-                        run_dir_,
-                        {
-                            **(
-                                {"vocals": result.vocals_path}
-                                if result.vocals_path
-                                else {}
-                            ),
-                            "instrumental": result.instrumental_path,
-                        },
-                    )
-                    stems_payload = _stems_payload(run_id)
+                    produced = {
+                        **(
+                            {"vocals": result.vocals_path} if result.vocals_path else {}
+                        ),
+                        "instrumental": result.instrumental_path,
+                    }
+                    stems.register(run_id, run_dir_, produced)
+                    stems_payload = _stems_payload(run_id, produced)
                     yield _sse({"type": "stage", "stage": "transcription"})
                 # batch_size=1 so each chunk's notes stream out as soon as it is
                 # generated, instead of waiting for a whole batch of chunks.
                 # no_eos_is_ok=True so one runaway chunk that never emits EOS only
                 # warns (and keeps its notes) instead of aborting the whole stream.
-                for ev in model.transcribe(
-                    (transcription_wav, sr),
-                    instruments=instruments or None,
-                    batch_size=1,
-                    no_eos_is_ok=True,
-                ):
-                    # A newer request preempted this run — stop generating
-                    # (closing the model.transcribe generator) and release the
-                    # lock via the finally, at most one chunk after the signal.
-                    if cancel.is_set():
-                        return
-                    if isinstance(ev, ProgressEvent):
-                        # Coarse chunk-completion anchor — forward it but keep it
-                        # out of the note list the MIDI file is built from.
-                        payload = json.dumps(
-                            {
-                                "type": "progress",
-                                "completed": ev.completed,
-                                "total": ev.total,
-                            }
-                        )
+                # A RuntimeError here (e.g. CUDA OOM mid-generation) must end the
+                # stream with a terminal error event, not a 200 whose body just
+                # stops — the client would otherwise mark the run done without MIDI.
+                try:
+                    for ev in model.transcribe(
+                        (transcription_wav, transcription_sr),
+                        instruments=instruments or None,
+                        batch_size=1,
+                        no_eos_is_ok=True,
+                    ):
+                        # A newer request preempted this run — stop generating
+                        # (closing the model.transcribe generator) and release the
+                        # lock via the finally, at most one chunk after the signal.
+                        if cancel.is_set():
+                            return
+                        if isinstance(ev, ProgressEvent):
+                            # Coarse chunk-completion anchor — forward it but keep
+                            # it out of the note list the MIDI file is built from.
+                            payload = json.dumps(
+                                {
+                                    "type": "progress",
+                                    "completed": ev.completed,
+                                    "total": ev.total,
+                                }
+                            )
+                            yield f"data: {payload}\n\n"
+                            continue
+                        events.append(ev)
+                        payload = json.dumps(event_to_dict(ev))
                         yield f"data: {payload}\n\n"
-                        continue
-                    events.append(ev)
-                    payload = json.dumps(event_to_dict(ev))
-                    yield f"data: {payload}\n\n"
+                except Exception as e:  # noqa: BLE001 — surfaced to the client
+                    yield _sse({"type": "error", "detail": str(e)})
+                    return
                 # All notes streamed — build the MIDI file in memory (reusing the
                 # exact `muscriptor transcribe` logic) and send it as a final event
                 # with the bytes base64-encoded.
@@ -537,7 +918,7 @@ def create_app(
                 # that just ends — no `error`, no `transcription_complete`.
                 try:
                     grid = model.detect_beat_grid_for(
-                        (transcription_wav, sr), detect_tempo
+                        (transcription_wav, transcription_sr), detect_tempo
                     )
                 except BeatDetectionError as e:
                     yield _sse({"type": "error", "detail": str(e)})
@@ -600,6 +981,12 @@ def create_app(
                     payload_dict["from_instrumental"] = True
                     payload = json.dumps(payload_dict)
                 yield f"data: {payload}\n\n"
+            except Exception as e:  # noqa: BLE001 — surfaced to the client
+                # Any failure after the stream opened (stem decode, beat-grid
+                # detection, MIDI assembly) must end with a terminal `error`
+                # event — otherwise the stream just stops and the client marks
+                # the run done with no MIDI and no explanation.
+                yield _sse({"type": "error", "detail": str(e)})
             finally:
                 release_lock()
 
@@ -628,27 +1015,8 @@ def create_app(
         Content-Disposition header, so a plain HTTP client can save the
         response straight to disk.
         """
-        data = await file.read()
-        try:
-            wav, sr = _read_wav_file(io.BytesIO(data))
-        except (wave.Error, EOFError):
-            try:
-                wav, sr = _read_non_wav_file(io.BytesIO(data))
-            except Exception as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"could not decode audio file '{file.filename}': {e}",
-                ) from e
-
-        duration_s = wav.shape[-1] / sr
-        if duration_s > _MAX_TRANSCRIBE_MIDI_DURATION_S:
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    f"audio file is {duration_s / 60:.1f} minutes long; "
-                    f"the limit is {_MAX_TRANSCRIBE_MIDI_DURATION_S // 60:.0f} minutes"
-                ),
-            )
+        _reject_oversized_upload(file)
+        _reject_long_audio(file)
 
         unknown = [n for n in instruments if n not in MT3_FULL_PLUS_GROUP_NAMES]
         if unknown:
@@ -672,25 +1040,45 @@ def create_app(
         # finally below) instead of waiting for the orphan sweep.
         run_dir: Path | None = None
         try:
+            # Read and decode only under the lock (see /transcribe): the decoded
+            # audio is hundreds of MB and must not be built in parallel.
+            data = await file.read()
+            wav, sr = await asyncio.to_thread(_decode_audio, data, file.filename)
+            duration_s = wav.shape[-1] / sr
+            if duration_s > _MAX_TRANSCRIBE_MIDI_DURATION_S:
+                raise HTTPException(
+                    status_code=413,
+                    detail=(
+                        f"audio file is {duration_s / 60:.1f} minutes long; "
+                        f"the limit is {_MAX_TRANSCRIBE_MIDI_DURATION_S // 60:.0f} minutes"
+                    ),
+                )
             transcription_wav = wav
+            transcription_sr = sr
             if remove_vocals:
                 # Same mutual exclusion as the model itself (see /transcribe):
                 # separation runs under the lock, so the GPU never does both.
+                # Both calls block (separation writes the whole upload to disk
+                # and runs for minutes), so they run off the event loop exactly
+                # as the /transcribe generator path does.
                 try:
-                    result, run_dir = _remove_vocals(data, file.filename)
+                    result, run_dir = await asyncio.to_thread(
+                        _remove_vocals, data, file.filename
+                    )
                 except PreprocessError as e:
                     raise HTTPException(status_code=422, detail=str(e)) from e
-                transcription_wav, _ = _read_non_wav_file(
-                    result.audio_for_transcription
+                transcription_wav, transcription_sr = await asyncio.to_thread(
+                    _read_non_wav_file, result.audio_for_transcription
                 )
-            # Reload the model first if it was unloaded while idle.
+            # Reload the model first if it was unloaded while idle. Loading the
+            # weights blocks, so keep the event loop (health, model, static) up.
             try:
-                model = ensure_model()
+                model = await asyncio.to_thread(ensure_model)
             except RuntimeError as e:
                 raise HTTPException(status_code=503, detail=str(e)) from e
             midi_bytes, _ = await asyncio.to_thread(
                 model.transcribe_and_postprocess,
-                (transcription_wav, sr),
+                (transcription_wav, transcription_sr),
                 instruments=instruments or None,
                 detect_tempo=detect_tempo,
             )
@@ -720,9 +1108,6 @@ def create_app(
         mode="mix": stereo, original audio (L) + FluidSynth synthesis (R);
         requires the `audio` upload. mode="synth": mono, just the synthesis.
         """
-        from muscriptor.utils.auralization import auralize as do_auralize
-        from muscriptor.utils.auralization import synthesize
-
         if mode not in ("mix", "synth"):
             raise HTTPException(status_code=400, detail=f"unknown mode: {mode!r}")
         if mode == "mix" and audio is None:
@@ -730,44 +1115,41 @@ def create_app(
                 status_code=400, detail="mode='mix' requires an audio file"
             )
 
+        _reject_oversized_upload(midi, _MIDI_MAX_BYTES)
+        if audio is not None:
+            _reject_oversized_upload(audio)
+            _reject_long_audio(audio)
         midi_data = await midi.read()
-        tmp_paths: list[str] = []
-
-        with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp_midi:
-            tmp_midi.write(midi_data)
-            midi_tmp = tmp_midi.name
-            tmp_paths.append(midi_tmp)
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_out:
-            out_tmp = tmp_out.name
-            tmp_paths.append(out_tmp)
-
+        # Cap the synthesis up front: a MIDI whose ticks stretch to hours would
+        # otherwise hang fluidsynth for the same time and fill the disk/RAM.
+        midi_duration_s = await asyncio.to_thread(_midi_duration_s, midi_data)
+        if (
+            midi_duration_s is not None
+            and midi_duration_s > _MAX_AURALIZE_MIDI_DURATION_S
+        ):
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"MIDI is {midi_duration_s / 60:.1f} minutes long; "
+                    f"the limit is {_MAX_AURALIZE_MIDI_DURATION_S // 60:.0f} minutes"
+                ),
+            )
         try:
-            if mode == "synth":
-                synthesize(midi_path=midi_tmp, output_path=out_tmp)
-            else:
-                audio_data = await audio.read()
-                suffix = Path(audio.filename or "audio.wav").suffix.lower() or ".wav"
-                with tempfile.NamedTemporaryFile(
-                    suffix=suffix, delete=False
-                ) as tmp_audio:
-                    tmp_audio.write(audio_data)
-                    tmp_paths.append(tmp_audio.name)
-                do_auralize(
-                    midi_path=midi_tmp,
-                    original_audio_path=tmp_audio.name,
-                    output_path=out_tmp,
-                )
-            with open(out_tmp, "rb") as f:
-                wav_bytes = f.read()
+            wav_bytes = await asyncio.to_thread(
+                _serialized,
+                auralize_lock,
+                _render_auralize,
+                mode,
+                midi_data,
+                audio,
+                busy_detail="server busy: another auralization is in progress",
+            )
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-        finally:
-            for p in tmp_paths:
-                if os.path.exists(p):
-                    os.unlink(p)
 
-        return Response(content=wav_bytes, media_type="audio/wav")
+        return Response(content=wav_bytes, media_type="audio/wav", headers=_NO_GZIP)
 
     @app.post("/arrange/guitar")
     async def arrange_guitar(
@@ -804,15 +1186,22 @@ def create_app(
         """
         from muscriptor.guitar_arrangement import (
             GuitarArrangementError,
-            MidiParseError,
+            InvalidMaxFretError,
             InvalidMelodyPolicyError,
             InvalidOverridesError,
+            MidiParseError,
+            TooManyNotesError,
+            TooLongArrangementError,
             arrange,
         )
 
+        _reject_oversized_upload(file, _MIDI_MAX_BYTES)
         midi_bytes = await file.read()
         try:
-            return arrange(
+            return await asyncio.to_thread(
+                _serialized,
+                arrange_lock,
+                arrange,
                 midi_bytes,
                 filename=file.filename or "input.mid",
                 track=track,
@@ -825,12 +1214,21 @@ def create_app(
                 normalize=normalize,
                 chord_overflow=chord_overflow,
                 detect_chords=chords,
+                busy_detail="server busy: another arrangement is in progress",
             )
         except GuitarArrangementError as e:
             status = (
                 400
                 if isinstance(
-                    e, (MidiParseError, InvalidOverridesError, InvalidMelodyPolicyError)
+                    e,
+                    (
+                        MidiParseError,
+                        InvalidOverridesError,
+                        InvalidMelodyPolicyError,
+                        InvalidMaxFretError,
+                        TooManyNotesError,
+                        TooLongArrangementError,
+                    ),
                 )
                 else 422
             )
@@ -840,21 +1238,58 @@ def create_app(
             ) from e
 
     async def _arrangement_upload(document: UploadFile, error_status: int) -> dict:
-        """Parse an uploaded arrangement.json into a dict (shared by mirrors)."""
+        """Parse and shape-check an uploaded arrangement.json (shared by mirrors).
+
+        The shape checks are the minimum every converter assumes: an object
+        document with object `source`/`instrument` blocks and list-typed meter
+        maps. A document failing one used to surface as a 500 (AttributeError /
+        TypeError) in one of the four mirrors instead of a clean 400.
+        """
         import json
 
-        raw = await document.read()
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as e:
+        _reject_oversized_upload(document)
+        if document.size is not None and document.size > _ARRANGEMENT_MAX_BYTES:
             raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"arrangement document is {document.size / (1024 * 1024):.0f} MB; "
+                    f"the limit is {_ARRANGEMENT_MAX_BYTES // (1024 * 1024)} MB"
+                ),
+            )
+        raw = await document.read()
+
+        def invalid(message: str) -> HTTPException:
+            return HTTPException(
                 status_code=error_status,
                 detail={
                     "code": "invalid_arrangement",
-                    "message": f"arrangement document is not valid JSON: {e}",
+                    "message": message,
                     "details": {},
                 },
-            ) from e
+            )
+
+        try:
+            # Parsing a big document blocks; keep the event loop serving.
+            parsed = await asyncio.to_thread(json.loads, raw)
+        except (ValueError, RecursionError) as e:
+            # JSONDecodeError is a ValueError; deeply nested JSON is a
+            # RecursionError. Both are the client's fault, not a server 500.
+            raise invalid(f"arrangement document is not valid JSON: {e}") from e
+        if not isinstance(parsed, dict):
+            raise invalid("arrangement document must be a JSON object")
+        if parsed.get("schema_version") not in (2, 3):
+            # Let the converters report the unsupported version with their own
+            # error code instead of masking it as a shape error.
+            return parsed
+        source = parsed.get("source")
+        if not isinstance(source, dict):
+            raise invalid("arrangement 'source' must be an object")
+        if not isinstance(parsed.get("instrument"), dict):
+            raise invalid("arrangement 'instrument' must be an object")
+        for key in ("tempo_events", "time_signature_events"):
+            if not isinstance(source.get(key, []), list):
+                raise invalid(f"arrangement 'source.{key}' must be a list")
+        return parsed
 
     @app.post("/arrange/guitar/midi")
     async def arrangement_to_midi(
@@ -874,7 +1309,9 @@ def create_app(
 
         document_dict = await _arrangement_upload(document, 400)
         try:
-            midi_bytes = arrangement_json_to_midi(document_dict)
+            midi_bytes = await asyncio.to_thread(
+                arrangement_json_to_midi, document_dict
+            )
         except GuitarArrangementError as e:
             raise HTTPException(
                 status_code=400,
@@ -884,7 +1321,7 @@ def create_app(
         return Response(
             content=midi_bytes,
             media_type="audio/midi",
-            headers={"Content-Disposition": f'attachment; filename="{stem}.mid"'},
+            headers={"Content-Disposition": _attachment_header(stem, ".mid")},
         )
 
     @app.post("/arrange/guitar/tab")
@@ -899,7 +1336,7 @@ def create_app(
 
         document_dict = await _arrangement_upload(document, 400)
         try:
-            tab_text = arrangement_json_to_tab(document_dict)
+            tab_text = await asyncio.to_thread(arrangement_json_to_tab, document_dict)
         except GuitarArrangementError as e:
             raise HTTPException(
                 status_code=400,
@@ -929,8 +1366,11 @@ def create_app(
 
         document_dict = await _arrangement_upload(document, 400)
         try:
-            xml_bytes = arrangement_json_to_musicxml(
-                document_dict, chords=chords, fingerings=fingerings
+            xml_bytes = await asyncio.to_thread(
+                arrangement_json_to_musicxml,
+                document_dict,
+                chords=chords,
+                fingerings=fingerings,
             )
         except GuitarArrangementError as e:
             raise HTTPException(
@@ -941,7 +1381,7 @@ def create_app(
         return Response(
             content=xml_bytes,
             media_type="application/vnd.recordare.musicxml+xml",
-            headers={"Content-Disposition": f'attachment; filename="{stem}.musicxml"'},
+            headers={"Content-Disposition": _attachment_header(stem, ".musicxml")},
         )
 
     @app.post("/arrange/guitar/pdf")
@@ -962,11 +1402,6 @@ def create_app(
         `fingerings=true`. Returns a zip with the PDF and the intermediate
         MusicXML. 503 when MuseScore is not installed.
         """
-        import subprocess
-        import tempfile
-        import zipfile
-        from pathlib import Path
-
         from muscriptor.guitar_arrangement import (
             GuitarArrangementError,
             arrangement_json_to_musicxml,
@@ -979,8 +1414,11 @@ def create_app(
 
         document_dict = await _arrangement_upload(document, 400)
         try:
-            xml_bytes = arrangement_json_to_musicxml(
-                document_dict, chords=chords, fingerings=fingerings
+            xml_bytes = await asyncio.to_thread(
+                arrangement_json_to_musicxml,
+                document_dict,
+                chords=chords,
+                fingerings=fingerings,
             )
         except GuitarArrangementError as e:
             raise HTTPException(
@@ -988,9 +1426,12 @@ def create_app(
                 detail={"code": e.code, "message": str(e), "details": e.details},
             ) from e
 
-        stem = (document.filename or "arrangement.json").rsplit(".", 1)[0]
+        # The upload filename is client-controlled and lands in file paths and
+        # the Content-Disposition header, so reduce it to a bare name first —
+        # an absolute or ../-laced name must not escape the scratch directory.
+        stem = Path(document.filename or "arrangement.json").name.rsplit(".", 1)[0]
         try:
-            binary = find_musescore()
+            binary = await asyncio.to_thread(find_musescore)
         except MuseScoreNotFoundError as e:
             raise HTTPException(
                 status_code=503,
@@ -1001,34 +1442,15 @@ def create_app(
                 },
             ) from e
         try:
-            with tempfile.TemporaryDirectory(prefix="guitar_pdf_") as tmp_dir:
-                tmp_path = Path(tmp_dir)
-                xml_path = tmp_path / f"{stem}.musicxml"
-                xml_path.write_bytes(xml_bytes)
-                pdf_path = tmp_path / f"{stem}.pdf"
-                proc = subprocess.run(
-                    [binary, "-o", str(pdf_path), str(xml_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=600,
-                )
-                if not pdf_path.is_file() or pdf_path.stat().st_size == 0:
-                    raise HTTPException(
-                        status_code=500,
-                        detail={
-                            "code": "fingering_export_failed",
-                            "message": (
-                                "MuseScore ran but produced no PDF for this arrangement"
-                            ),
-                            "details": {"stderr": (proc.stderr or "")[-2000:]},
-                        },
-                    )
-                buffer = io.BytesIO()
-                with zipfile.ZipFile(buffer, "w") as archive:
-                    archive.write(pdf_path, "full_score.pdf")
-                    archive.write(xml_path, f"{stem}.musicxml")
-                zip_bytes = buffer.getvalue()
-        except (MuseScoreError, subprocess.TimeoutExpired, OSError) as e:
+            zip_bytes = await asyncio.to_thread(
+                _serialized,
+                musescore_lock,
+                _engrave_arrangement_pdf,
+                binary,
+                xml_bytes,
+                stem,
+            )
+        except (MuseScoreError, OSError) as e:
             raise HTTPException(
                 status_code=500,
                 detail={
@@ -1040,7 +1462,10 @@ def create_app(
         return Response(
             content=zip_bytes,
             media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{stem}_score.zip"'},
+            headers={
+                **_NO_GZIP,
+                "Content-Disposition": _attachment_header(stem, "_score.zip"),
+            },
         )
 
     @app.post("/sheets")
@@ -1060,10 +1485,13 @@ def create_app(
         engraved from. Without it the engraving keeps the timing jitter, so this
         does not quantize anything itself.
         """
+        _reject_oversized_upload(midi, _MIDI_MAX_BYTES)
         midi_bytes = await midi.read()
 
         try:
-            zip_bytes = await asyncio.to_thread(engrave_to_zip, midi_bytes, quantized)
+            zip_bytes = await asyncio.to_thread(
+                _serialized, musescore_lock, engrave_to_zip, midi_bytes, quantized
+            )
         except MuseScoreNotFoundError as e:
             # A deployment problem, not a bad request: the same 503 the UI
             # already knows how to report, with the install hint as its detail.
@@ -1077,7 +1505,8 @@ def create_app(
             content=zip_bytes,
             media_type="application/zip",
             headers={
-                "Content-Disposition": f'attachment; filename="{SHEETS_ZIP_NAME}"'
+                **_NO_GZIP,
+                "Content-Disposition": f'attachment; filename="{SHEETS_ZIP_NAME}"',
             },
         )
 
@@ -1097,7 +1526,10 @@ def create_app(
         return FileResponse(
             path,
             media_type="audio/wav",
-            headers={"Content-Disposition": f'attachment; filename="{stem}.wav"'},
+            headers={
+                **_NO_GZIP,
+                "Content-Disposition": f'attachment; filename="{stem}.wav"',
+            },
         )
 
     @app.get("/model")
@@ -1110,7 +1542,10 @@ def create_app(
         }
 
     @app.post("/model")
-    async def switch_model(size: Annotated[str, Form()]) -> dict:
+    async def switch_model(
+        size: Annotated[str, Form()],
+        x_model_token: Annotated[str | None, Header()] = None,
+    ) -> dict:
         """Load another model size and make it the live one.
 
         Runs in a background thread (weights download + load take a while);
@@ -1119,6 +1554,15 @@ def create_app(
         works whatever the server was started with, including a local file —
         the loader maps the keyword to the published checkpoint.
         """
+        # This endpoint mutates the shared GPU state, so a public deployment
+        # must gate it: when MODEL_ADMIN_TOKEN is set, the X-Model-Token header
+        # has to match. Unset (the localhost default) leaves it open.
+        admin_token = os.environ.get("MODEL_ADMIN_TOKEN")
+        if admin_token and x_model_token != admin_token:
+            raise HTTPException(
+                status_code=403,
+                detail="POST /model requires the X-Model-Token header on this server",
+            )
         if model_loader is None:
             raise HTTPException(
                 status_code=501,
@@ -1136,13 +1580,24 @@ def create_app(
             raise HTTPException(
                 status_code=409, detail="a model is already being loaded"
             )
+        if size == model_state["size"] and model_state["status"] == "ready":
+            return {"model": size, "status": "ready"}
+
+        # Mark loading *before* checking the transcription lock: a transcription
+        # starting in the window between the two would otherwise grab the lock
+        # and the outgoing model (see acquire_transcribe_lock / ensure_model)
+        # while this swap loads a second set of weights into VRAM.
+        previous_status = model_state["status"]
+        previous_error = model_state["error"]
+        model_state["status"] = "loading"
+        model_state["error"] = None
         if transcribe_lock.locked():
+            model_state["status"] = previous_status
+            model_state["error"] = previous_error
             raise HTTPException(
                 status_code=409,
                 detail="a transcription is in progress; try again when it finishes",
             )
-        if size == model_state["size"] and model_state["status"] == "ready":
-            return {"model": size, "status": "ready"}
 
         def load() -> None:
             try:
@@ -1170,8 +1625,6 @@ def create_app(
                 model_state["status"] = "error"
                 model_state["error"] = str(e)
 
-        model_state["status"] = "loading"
-        model_state["error"] = None
         threading.Thread(target=load, daemon=True).start()
         return {"model": model_state["size"], "status": "loading"}
 

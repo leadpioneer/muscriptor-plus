@@ -40,9 +40,11 @@ def _require(document: dict, key: str):
     return value
 
 
-def _positive_int(value, what: str) -> int:
+def _positive_int(value, what: str, maximum: int | None = None) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise InvalidArrangementError(f"{what} must be a positive integer")
+    if maximum is not None and value > maximum:
+        raise InvalidArrangementError(f"{what} must not exceed {maximum}")
     return value
 
 
@@ -97,12 +99,65 @@ def _iter_note_events(notes: list):
             raise InvalidArrangementError(
                 f"note #{index}: velocity {velocity} is outside 1..127"
             )
+        if onset < 0:
+            raise InvalidArrangementError(
+                f"note #{index}: onset_ticks {onset} is negative"
+            )
         if offset <= onset:
             raise InvalidArrangementError(
                 f"note #{index}: offset_ticks {offset} is not after onset_ticks {onset}"
             )
         yield (onset, 1, Message("note_on", note=pitch, velocity=velocity, time=0))
         yield (offset, 0, Message("note_off", note=pitch, velocity=0, time=0))
+
+
+def _require_non_negative_tick(event, i: int, what: str) -> None:
+    tick = event.get("tick", 0) if isinstance(event, dict) else None
+    if not isinstance(tick, int) or isinstance(tick, bool) or tick < 0:
+        raise InvalidArrangementError(
+            f"{what} event #{i}: 'tick' must be a non-negative integer"
+        )
+
+
+def _validate_source(source: dict, schema_version: int) -> None:
+    """Validate the schema-v3 global meta maps so a malformed document is a 400.
+
+    `tempo_events` entries need a non-negative integer `tick` and a positive
+    integer `tempo` (a missing key, 0 or a negative tick used to surface as a
+    KeyError / division-by-zero / mido error, i.e. a 500), and
+    `time_signature_events` need a non-negative tick and values inside the MIDI
+    meta-event byte range (numerator/clocks 0..255, denominator a power of 2).
+    """
+    if schema_version < 3:
+        return
+    for i, event in enumerate(source.get("tempo_events") or []):
+        _require_non_negative_tick(event, i, "tempo")
+        # MIDI stores tempo in 3 bytes.
+        _positive_int(event.get("tempo"), f"tempo event #{i}: 'tempo'", 0xFFFFFF)
+    for i, event in enumerate(source.get("time_signature_events") or []):
+        _require_non_negative_tick(event, i, "time signature")
+        _positive_int(
+            event.get("numerator"), f"time signature event #{i}: 'numerator'", 255
+        )
+        denominator = _positive_int(
+            event.get("denominator"),
+            f"time signature event #{i}: 'denominator'",
+            1 << 255,
+        )
+        if denominator & (denominator - 1):
+            raise InvalidArrangementError(
+                f"time signature event #{i}: 'denominator' must be a power of 2"
+            )
+        for name in ("clocks_per_click", "notated_32nd_notes_per_beat"):
+            value = event.get(name)
+            if value is not None and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or not 0 <= value <= 255
+            ):
+                raise InvalidArrangementError(
+                    f"time signature event #{i}: {name!r} must be an integer in 0..255"
+                )
 
 
 def _meta_events(source: dict, schema_version: int):
@@ -141,12 +196,17 @@ def arrangement_json_to_midi(document) -> bytes:
     document = parse_arrangement_document(document)
     source = document["source"]
     schema_version = document["schema_version"]
-    ticks_per_beat = _positive_int(source.get("ticks_per_beat"), "ticks_per_beat")
+    ticks_per_beat = _positive_int(
+        source.get("ticks_per_beat"), "ticks_per_beat", 32767
+    )
+    _validate_source(source, schema_version)
     program = source.get("program")
     if program is not None and (
-        not isinstance(program, int) or isinstance(program, bool)
+        not isinstance(program, int)
+        or isinstance(program, bool)
+        or not 0 <= program <= 127
     ):
-        raise InvalidArrangementError("'program' must be an integer or null")
+        raise InvalidArrangementError("'program' must be an integer in 0..127 or null")
     track_name = source.get("track_name") or "guitar arrangement"
 
     midi = mido.MidiFile(type=0, ticks_per_beat=ticks_per_beat)

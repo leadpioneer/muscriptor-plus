@@ -10,6 +10,8 @@ message order). Ids therefore depend only on the source file, never on
 solver output. `note_on` with velocity 0 is treated as `note_off`, as
 required by the MIDI spec. A note-on left unmatched at the end of its track
 keeps its offset at the track's final tick so no note is silently dropped.
+A zero-length note (both events on one tick) gets `offset = onset + 1`, so
+every exporter receives a positive duration instead of rejecting the note.
 
 Drum events (channel 9) are parsed like any other channel but are excluded
 from automatic track selection.
@@ -25,7 +27,6 @@ from mido import MetaMessage
 from .errors import (
     AmbiguousTrackError,
     MidiParseError,
-    PolyphonicInputError,
     TrackNotFoundError,
 )
 from .models import MidiNote, TempoEvent, TimeSignatureEvent
@@ -148,7 +149,7 @@ def parse_midi(data: bytes) -> ParsedMidi:
                                 channel=channel,
                                 pitch=pitch,
                                 onset_ticks=onset,
-                                offset_ticks=tick,
+                                offset_ticks=max(tick, onset + 1),
                                 velocity=velocity,
                             )
                         )
@@ -205,7 +206,7 @@ def _flush_unmatched(track_index, pending, final_tick, combo) -> None:
                     channel=channel,
                     pitch=pitch,
                     onset_ticks=onset,
-                    offset_ticks=final_tick,
+                    offset_ticks=max(final_tick, onset + 1),
                     velocity=velocity,
                 )
             )
@@ -283,28 +284,3 @@ def _alternatives(parsed: ParsedMidi) -> str:
         + (", drums)" if s["drum"] else ")")
         for s in summaries
     )
-
-
-def check_monophonic(notes: tuple[MidiNote, ...]) -> None:
-    """Refuse simultaneous onsets instead of guessing a melodic line.
-
-    Overlapping durations with distinct onsets (legato, a ringing previous
-    note) are allowed; two or more notes starting at the same tick are not.
-    """
-    by_onset: dict[int, list[MidiNote]] = {}
-    for note in notes:
-        by_onset.setdefault(note.onset_ticks, []).append(note)
-    for tick in sorted(by_onset):
-        group = by_onset[tick]
-        if len(group) > 1:
-            ids = [n.id for n in group]
-            pitches = [n.pitch for n in group]
-            raise PolyphonicInputError(
-                f"simultaneous note onsets at tick {tick}: pitches "
-                + ", ".join(str(p) for p in pitches)
-                + " — this arranger optimizes a single melodic line; extract "
-                "a monophonic melody track first",
-                tick=tick,
-                note_ids=ids,
-                pitches=pitches,
-            )

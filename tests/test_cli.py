@@ -151,6 +151,29 @@ def test_jsonl_to_file_keeps_progress_on_stderr(patched_model, fake_audio, tmp_p
     ]
 
 
+def test_auralize_with_stdout_is_rejected_up_front(patched_model, fake_audio):
+    """`-o -` cannot also write a separate auralization file; reject it before
+    the model loads instead of silently skipping the export."""
+    runner = CliRunner()
+    result = runner.invoke(
+        main_mod.app,
+        [
+            "transcribe",
+            str(fake_audio),
+            "-f",
+            "midi",
+            "-o",
+            "-",
+            "--auralize",
+            "mix.wav",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--auralize" in result.stderr and "-o -" in result.stderr
+    assert "Loading model" not in result.stderr
+    assert _FakeModel.last_kwargs is None
+
+
 def test_batching_requires_disabling_prelude_forcing(patched_model, fake_audio):
     """--batch-size > 1 without --no-prelude-forcing is rejected up front,
     before any model is loaded."""

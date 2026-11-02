@@ -249,6 +249,7 @@ export class PianoRoll {
   private contentDuration = 0;
   /** Detected beat grid; null until the final `midi` event arrives (then: seconds grid). */
   private beatGrid: BeatGrid | null = null;
+  private readonly onResize = () => this.resize();
 
   get pxPerSec(): number {
     return this._pxPerSec;
@@ -258,7 +259,12 @@ export class PianoRoll {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d")!;
     this.resize();
-    window.addEventListener("resize", () => this.resize());
+    window.addEventListener("resize", this.onResize);
+  }
+
+  /** Detach the window listener so an unmounted roll can be collected. */
+  dispose() {
+    window.removeEventListener("resize", this.onResize);
   }
 
   private resize() {

@@ -666,9 +666,9 @@ describe("GuitarArrangerDialog", () => {
     renderDialog();
     await screen.findByText("Finger: 1");
     await user.click(screen.getByRole("button", { name: "Listen" }));
-    // One NoteOpts per arrangement note: MIDI 60, 0..480 ticks at 120 BPM
-    // (480 ticks_per_beat = 2 s/beat) → 0..0.5 s, on the source's GM program
-    // (30 = distorted electric guitar in the fixture).
+    // One NoteOpts per arrangement note: MIDI 60, 0..480 ticks at the default
+    // 120 BPM (480 ticks_per_beat = 2 s/beat) → 0..0.5 s, on the source's GM
+    // program (30 = distorted electric guitar in the fixture).
     expect(mockEngine.replaceNotes).toHaveBeenCalledWith(
       [
         {
@@ -684,6 +684,32 @@ describe("GuitarArrangerDialog", () => {
     // Pause hands over to the engine without restoring yet.
     await user.click(screen.getByRole("button", { name: "Pause" }));
     expect(mockEngine.pause).toHaveBeenCalled();
+  });
+
+  it("auditions at the document's tempo map", async () => {
+    const withTempo = arrangement({
+      source: {
+        ...ARRANGEMENT.source,
+        // 60 BPM (1 000 000 µs per beat): 0..480 ticks → 0..1 s.
+        tempo_events: [{ tick: 0, tempo: 1_000_000, is_default: false }],
+      },
+    });
+    responses.push({ status: 200, body: withTempo });
+    const user = userEvent.setup();
+    renderDialog();
+    await screen.findByText("Finger: 1");
+    await user.click(screen.getByRole("button", { name: "Listen" }));
+    expect(mockEngine.replaceNotes).toHaveBeenCalledWith(
+      [
+        {
+          instrument: "distorted_electric_guitar",
+          pitch: NOTE.pitch,
+          start: 0,
+          end: 1,
+        },
+      ],
+      expect.any(Number),
+    );
   });
 
   it("downloads the converted MIDI from the dedicated endpoint", async () => {

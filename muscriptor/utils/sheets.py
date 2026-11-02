@@ -462,15 +462,6 @@ def prepare_output_dir(path: Path) -> None:
         raise ValueError(f"{path} is not empty")
 
 
-def sheets_are_available() -> bool:
-    """Whether MuseScore can be found, for callers that want to check first."""
-    try:
-        find_musescore()
-    except MuseScoreNotFoundError:
-        return False
-    return True
-
-
 if __name__ == "__main__":  # pragma: no cover - manual smoke test
     written = write_sheets(Path(sys.argv[1]).read_bytes(), Path(sys.argv[2]))
     for path in written:

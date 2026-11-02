@@ -103,7 +103,7 @@ def load_audio(path: str | Path, target_sr: int = 16000) -> torch.Tensor:
     filepath = Path(path)
     try:
         wav, sr = _read_wav_file(str(filepath))
-    except (wave.Error, EOFError):
+    except (wave.Error, EOFError, ValueError):
         wav, sr = _read_non_wav_file(str(filepath))
     if wav.shape[0] > 1:
         wav = wav.mean(dim=0, keepdim=True)

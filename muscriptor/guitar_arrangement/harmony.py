@@ -31,6 +31,7 @@ Nothing here changes the music — the labels are derived data for display
 from collections import defaultdict
 from typing import Sequence
 
+from .errors import TooLongArrangementError
 from .models import ChordLabel, MidiNote
 
 
@@ -64,6 +65,11 @@ _TEMPLATES = (
 # Preferred spellings (jazz default: flats, except F#/C# which read better
 # sharp); index == pitch class.
 _ROOT_NAMES = ("C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B")
+
+# One window per beat and every window scans every note, so a bogus huge
+# offset_ticks would cost O(beats × notes). 20k beats is ~2.7 hours at
+# 120 BPM — beyond any real arrangement, small enough to fail fast.
+_MAX_HARMONY_WINDOWS = 20_000
 
 _EXTRA_PENALTY = 0.6  # a sounding note outside the chord
 _MISSING_PENALTY = 0.5  # a chord tone that does not sound at all
@@ -105,6 +111,11 @@ def _beat_windows(time_signatures, ticks_per_beat: int, total_ticks: int):
             start = current + beat * beat_ticks
             if start >= total_ticks:
                 break
+            if len(windows) >= _MAX_HARMONY_WINDOWS:
+                raise TooLongArrangementError(
+                    f"arrangement is too long for chord detection: more than "
+                    f"{_MAX_HARMONY_WINDOWS} beats"
+                )
             windows.append((start, min(start + beat_ticks, total_ticks)))
         current += bar_ticks
     return windows

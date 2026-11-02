@@ -8,17 +8,8 @@ import type { TranscriptionResult } from "../hooks/useTranscription";
 import { useI18n } from "../i18n";
 import { IconChevron, IconDownload } from "./icons";
 import { track } from "../analytics";
-
-/** The FastAPI `detail` of a failed response, or its raw body if it isn't one. */
-async function errorDetail(resp: Response): Promise<string> {
-  const text = await resp.text();
-  try {
-    return JSON.parse(text).detail ?? text;
-  } catch {
-    // not JSON — keep the raw body
-    return text;
-  }
-}
+import { errorDetail } from "../http";
+import { saveBlob } from "../download";
 
 /**
  * Output / "job" actions, shown below the piano roll: live transcription
@@ -119,12 +110,10 @@ export function OutputBar(props: {
       const resp = await fetch("/auralize", { method: "POST", body: form });
       if (!resp.ok) throw new Error(await errorDetail(resp));
       const wavBlob = await resp.blob();
-      const url = URL.createObjectURL(wavBlob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = stem() + (mode === "mix" ? "_mix.wav" : "_transcription.wav");
-      a.click();
-      URL.revokeObjectURL(url);
+      saveBlob(
+        wavBlob,
+        stem() + (mode === "mix" ? "_mix.wav" : "_transcription.wav"),
+      );
     } catch (e) {
       track("download_error", {
         format: mode === "mix" ? "wav_mix" : "wav_synth",
@@ -196,12 +185,7 @@ export function OutputBar(props: {
       const resp = await fetch(url);
       if (!resp.ok) throw new Error(await errorDetail(resp));
       const blob = await resp.blob();
-      const url2 = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url2;
-      a.download = `${stem()}_${kind}.wav`;
-      a.click();
-      URL.revokeObjectURL(url2);
+      saveBlob(blob, `${stem()}_${kind}.wav`);
     } catch (e) {
       track("download_error", {
         format: `stem_${kind}`,

@@ -3,31 +3,10 @@
 A new phrase starts before an event only when *every* note started before it
 has already stopped (a long ringing bass note that overlaps the next onset is
 NOT silence) and the gap between that full sound end and the event's onset
-reaches `phrase_gap_beats`. The v2 note-level `split_phrases` is kept for the
-legacy monophonic path.
+reaches `phrase_gap_beats`.
 """
 
-from .models import MidiNote, NoteEvent, Phrase
-
-
-def split_phrases(
-    notes: tuple[MidiNote, ...],
-    ticks_per_beat: int,
-    phrase_gap_beats: float,
-) -> tuple[Phrase, ...]:
-    """Group `notes` (already sorted by onset) into phrases."""
-    if not notes:
-        return ()
-    threshold_ticks = phrase_gap_beats * ticks_per_beat
-    phrases: list[list[MidiNote]] = [[notes[0]]]
-    for note in notes[1:]:
-        gap = max(0, note.onset_ticks - phrases[-1][-1].offset_ticks)
-        if gap >= threshold_ticks:
-            phrases.append([])
-        phrases[-1].append(note)
-    return tuple(
-        Phrase(index=index, notes=tuple(group)) for index, group in enumerate(phrases)
-    )
+from .models import NoteEvent
 
 
 def split_event_phrases(

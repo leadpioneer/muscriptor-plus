@@ -406,7 +406,7 @@ export function App() {
           if (dur > 0) {
             let text = `${formatClock(frac * dur)}/${formatClock(dur)}`;
             const eta = progress.etaMs(now);
-            if (eta != null) text += `В В В ${t("done_in", { time: formatClock(eta / 1000) })}`;
+            if (eta != null) text += ` · ${t("done_in", { time: formatClock(eta / 1000) })}`;
             progressLabelRef.current.textContent = text;
           } else {
             progressLabelRef.current.textContent = "";

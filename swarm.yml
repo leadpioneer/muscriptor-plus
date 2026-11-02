@@ -63,6 +63,9 @@ services:
     command: ["--port", "80"]
     environment:
       - HF_TOKEN=${HF_TOKEN:?HF_TOKEN must be set to pull the private weights}
+      # Optional: when set, gates POST /model (model switching/unloading) with
+      # X-Model-Token. Unset leaves the header ModelSwitcher open as usual.
+      - MODEL_ADMIN_TOKEN=${MODEL_ADMIN_TOKEN:-}
     volumes:
       - hf_cache:/root/.cache/huggingface
     deploy:
@@ -74,6 +77,9 @@ services:
         - "traefik.http.routers.backend.tls.certresolver=letsencrypt_resolver"
         - "traefik.http.services.backend.loadbalancer.server.port=80"
         - "traefik.http.routers.backend.priority=10"
+        # No Traefik buffering middleware: it buffers the response too, so the
+        # SSE stream from /transcribe would arrive all at once at the end. Body
+        # caps are enforced in-app by `_UploadBodyLimit`.
         - "prometheus-port=80"
       replicas: 1
       resources:

@@ -12,6 +12,7 @@ import pytest
 
 from muscriptor.guitar_arrangement import (
     InvalidArrangementError,
+    TooLongArrangementError,
     arrange,
     arrangement_json_to_musicxml,
     detect_chord_labels,
@@ -155,6 +156,13 @@ def test_chord_detection_can_be_disabled():
     assert document["chords"] == []
 
 
+def test_absurdly_long_timeline_is_rejected():
+    """One very long note must not make the detector walk millions of beats."""
+    notes = _notes([(45, 0, 0x0FFFFFFF), (52, 0, 0x0FFFFFFF), (60, 0, 0x0FFFFFFF)])
+    with pytest.raises(TooLongArrangementError):
+        detect_chord_labels(notes, 480)
+
+
 def _harmonies(xml_bytes):
     return list(ET.fromstring(xml_bytes).iter("harmony"))
 
@@ -188,6 +196,19 @@ def test_musicxml_harmony_supports_bass_and_degrees():
     )
     harmony = _harmonies(arrangement_json_to_musicxml(slash))[0]
     assert harmony.findtext("bass/bass-step") == "E"
+
+
+def test_harmony_after_a_full_measure_note_is_not_lost():
+    # The note fills the bar, so the MusicXML cursor jumps straight to the
+    # barline and the chord at tick 960 must still be flushed.
+    document = arrange(melody_midi([(60, 0, 1920)]), filename="held.mid")
+    assert document["chords"] == []  # a single note is not a chord
+    document["chords"] = [
+        {"tick": 0, "root": "C", "kind": "maj"},
+        {"tick": 960, "root": "G", "kind": "7"},
+    ]
+    harmonies = _harmonies(arrangement_json_to_musicxml(document))
+    assert [h.findtext("root/root-step") for h in harmonies] == ["C", "G"]
 
 
 def test_musicxml_chords_can_be_disabled():

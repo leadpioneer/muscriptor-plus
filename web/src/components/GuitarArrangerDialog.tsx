@@ -21,6 +21,7 @@ import { GM_PROGRAM, type NoteOpts } from "../audio";
 import { useI18n } from "../i18n";
 import { EN } from "../i18n/en";
 import { track } from "../analytics";
+import { saveBlob } from "../download";
 import {
   arrangeGuitar,
   buildOverrides,
@@ -82,16 +83,6 @@ function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
-/** Download helper: blob → transient object URL → anchor click. */
-function saveBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 function reconcileSelection(
   arrangement: GuitarArrangement,
   keep: { phrase: number; noteId: string | null } | null,
@@ -104,17 +95,45 @@ function reconcileSelection(
   return { phrase, noteId: note?.id ?? null };
 }
 
-/** Nominal playback tempo: the document has no tempo map, so 120 BPM (2 s per
- *  beat) is the documented constant. Relative rhythm is exact. */
-const NOMINAL_BPM = 120;
+/** MIDI's default tempo — 500 000 µs per beat = 120 BPM — applies before the
+ *  first tempo event and when the document carries no tempo map. */
+const DEFAULT_US_PER_BEAT = 500_000;
+
+/** `ticks → seconds` from the document's tempo map (schema v3). */
+function playbackSeconds(
+  arrangement: GuitarArrangement,
+): (ticks: number) => number {
+  const tpb = arrangement.source.ticks_per_beat;
+  const events = [...(arrangement.source.tempo_events ?? [])]
+    .filter((e) => e.tick >= 0 && e.tempo > 0)
+    .sort((a, b) => a.tick - b.tick);
+  // Prefix seconds at every tempo change; the first segment starts at tick 0
+  // with the standard MIDI tempo.
+  let tick = 0;
+  let seconds = 0;
+  let usPerBeat = DEFAULT_US_PER_BEAT;
+  const marks = events.map((event) => {
+    seconds += ((event.tick - tick) * usPerBeat) / 1e6 / tpb;
+    tick = event.tick;
+    usPerBeat = event.tempo;
+    return { tick, seconds, usPerBeat };
+  });
+  return (at) => {
+    let mark = { tick: 0, seconds: 0, usPerBeat: DEFAULT_US_PER_BEAT };
+    for (const next of marks) {
+      if (next.tick > at) break;
+      mark = next;
+    }
+    return mark.seconds + ((at - mark.tick) * mark.usPerBeat) / 1e6 / tpb;
+  };
+}
 
 function playbackNotes(arrangement: GuitarArrangement): NoteOpts[] {
   const program = arrangement.source.program ?? 24;
   const instrument =
     Object.entries(GM_PROGRAM).find(([, p]) => p === program)?.[0] ??
     "acoustic_guitar";
-  const sec = (ticks: number) =>
-    (ticks / arrangement.source.ticks_per_beat) * (60 / NOMINAL_BPM);
+  const sec = playbackSeconds(arrangement);
   return arrangement.notes.map((n) => ({
     instrument,
     pitch: n.pitch,
@@ -364,14 +383,10 @@ export function GuitarArrangerDialog(props: {
   function download() {
     if (applied === null) return;
     track("guitar_arranger", { action: "download" });
-    const url = URL.createObjectURL(
+    saveBlob(
       new Blob([applied.text], { type: "application/json" }),
+      sourceFilename.replace(/\.[^.]+$/, "") + ".guitar-arrangement.json",
     );
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = sourceFilename.replace(/\.[^.]+$/, "") + ".guitar-arrangement.json";
-    a.click();
-    URL.revokeObjectURL(url);
   }
 
   function stem(): string {

@@ -38,12 +38,13 @@ marked defaults.
 """
 
 import xml.etree.ElementTree as ET
+from bisect import bisect_right
 from dataclasses import dataclass
 
 from .errors import InvalidArrangementError, UnsupportedArrangementError
+from .tab import _MAX_TAB_STEPS
 
 SUPPORTED_SCHEMA_VERSIONS = (2, 3)
-PITCH_STEPS = ("C", "D", "E", "F", "G", "A", "B")
 
 # Detector quality codes → MusicXML <kind> plus added degrees
 # (degree-value, degree-alter, degree-type).
@@ -64,6 +65,11 @@ _HARMONY_KINDS = {
     "madd9": ("minor", ((9, 0, "add"),)),
 }
 
+# A meter like 1/65536 makes a bar one tick long, so the tick limit alone
+# would still allow millions of measures (gigabytes of XML). Cap the measure
+# count too, at the width of the tab grid's 16th-note columns.
+_MAX_MEASURES = _MAX_TAB_STEPS // 16
+
 
 def _name_to_step_alter(name: str) -> tuple[str, int]:
     """`"Bb"` → `("B", -1)`; raises for anything else."""
@@ -72,6 +78,20 @@ def _name_to_step_alter(name: str) -> tuple[str, int]:
         raise InvalidArrangementError(f"bad chord tone name {name!r}")
     alter = 1 if suffix == "#" else (-1 if suffix == "b" else 0)
     return name[0], alter
+
+
+def _bucket_by_measure(
+    events: list[dict], starts: list[int], ends: list[int]
+) -> dict[int, list[dict]]:
+    """Group tick-carrying events by measure in one pass (per-measure scans
+    made rendering O(measures × events))."""
+    buckets: dict[int, list[dict]] = {}
+    for event in events:
+        tick = event.get("tick", 0)
+        index = bisect_right(starts, tick) - 1
+        if 0 <= index < len(ends) and tick < ends[index]:
+            buckets.setdefault(index, []).append(event)
+    return buckets
 
 
 def _pitch_to_step_alter_octave(pitch: int) -> tuple[str, int, int]:
@@ -149,6 +169,22 @@ def parse_document(document) -> tuple[dict, list[dict]]:
     notes = document.get("notes")
     if not isinstance(notes, list) or not notes:
         raise InvalidArrangementError("arrangement document has no notes")
+    instrument = document.get("instrument")
+    open_pitches = (
+        instrument.get("open_pitches") if isinstance(instrument, dict) else None
+    )
+    if (
+        not isinstance(open_pitches, list)
+        or not open_pitches
+        or not all(
+            isinstance(p, int) and not isinstance(p, bool) and 0 <= p <= 127
+            for p in open_pitches
+        )
+    ):
+        raise InvalidArrangementError(
+            "'instrument.open_pitches' must be a non-empty list of "
+            "MIDI pitches (0..127)"
+        )
     for index, note in enumerate(notes):
         if not isinstance(note, dict):
             raise InvalidArrangementError(f"note #{index} is not an object")
@@ -158,11 +194,65 @@ def parse_document(document) -> tuple[dict, list[dict]]:
                 raise InvalidArrangementError(
                     f"note #{index}: {key!r} must be an integer"
                 )
-        if not isinstance(note.get("string"), int) or not isinstance(
-            note.get("fret"), int
+        if not 0 <= note["pitch"] <= 127:
+            raise InvalidArrangementError(
+                f"note #{index}: pitch {note['pitch']} is outside 0..127"
+            )
+        string = note.get("string")
+        fret = note.get("fret")
+        if (
+            not isinstance(string, int)
+            or isinstance(string, bool)
+            or not isinstance(fret, int)
+            or isinstance(fret, bool)
         ):
             raise InvalidArrangementError(
                 f"note #{index}: string/fret are required for MusicXML"
+            )
+        # Same bounds as the tab converter, so a document either exports
+        # everywhere or is a clean 400 everywhere (bad values used to reach
+        # MuseScore and fail late with a 500).
+        if not 1 <= string <= len(open_pitches):
+            raise InvalidArrangementError(
+                f"note #{index}: string {string} is outside 1..{len(open_pitches)}"
+            )
+        if not 0 <= fret <= 99:
+            raise InvalidArrangementError(
+                f"note #{index}: fret {fret} does not fit the tab grid"
+            )
+        if note["onset_ticks"] < 0:
+            raise InvalidArrangementError(
+                f"note #{index}: onset_ticks {note['onset_ticks']} is negative"
+            )
+        if note["offset_ticks"] <= note["onset_ticks"]:
+            raise InvalidArrangementError(
+                f"note #{index}: offset_ticks {note['offset_ticks']} is not after "
+                f"onset_ticks {note['onset_ticks']}"
+            )
+    for i, event in enumerate(source.get("tempo_events") or []):
+        tempo = event.get("tempo") if isinstance(event, dict) else None
+        if not isinstance(tempo, int) or isinstance(tempo, bool) or tempo <= 0:
+            raise InvalidArrangementError(
+                f"tempo event #{i}: 'tempo' must be a positive integer"
+            )
+    for i, event in enumerate(source.get("time_signature_events") or []):
+        numerator = event.get("numerator") if isinstance(event, dict) else None
+        denominator = event.get("denominator") if isinstance(event, dict) else None
+        if (
+            not isinstance(numerator, int)
+            or isinstance(numerator, bool)
+            or numerator <= 0
+        ):
+            raise InvalidArrangementError(
+                f"time signature event #{i}: 'numerator' must be a positive integer"
+            )
+        if (
+            not isinstance(denominator, int)
+            or isinstance(denominator, bool)
+            or denominator <= 0
+        ):
+            raise InvalidArrangementError(
+                f"time signature event #{i}: 'denominator' must be a positive integer"
             )
     ordered = sorted(
         notes, key=lambda n: (n["onset_ticks"], -n["pitch"], n.get("id", ""))
@@ -224,6 +314,11 @@ def _measure_boundaries(source: dict, ticks_per_beat: int, total_ticks: int):
     current = 0
     signature_index = 0
     while current < total_ticks:
+        if len(boundaries) >= _MAX_MEASURES:
+            raise InvalidArrangementError(
+                f"arrangement needs more than {_MAX_MEASURES} measures at this "
+                "meter; it is too long to export as MusicXML"
+            )
         while (
             signature_index + 1 < len(signatures)
             and signatures[signature_index + 1].get("tick", 0) <= current
@@ -346,7 +441,7 @@ def _add_measure_content(
     numerator,
     denominator,
     previous_meter,
-    units,
+    measure_units: list[_Unit],
     tempos,
     ticks_per_beat,
     open_pitches,
@@ -407,11 +502,6 @@ def _add_measure_content(
         ET.SubElement(metronome, "per-minute").text = str(bpm)
         ET.SubElement(direction, "sound", {"tempo": str(bpm)})
 
-    measure_units = [
-        unit
-        for unit in units
-        if unit.onset < measure_end and unit.offset > measure_start
-    ]
     voices = sorted({unit.voice for unit in measure_units})
     # Chord symbols of this measure are emitted in voice 1 as the cursor
     # passes their tick, so MuseScore places them at the right beat. A
@@ -485,8 +575,6 @@ def _add_measure_content(
                 )
             cursor = max(cursor, segment_onset + duration)
         if cursor < measure_end:
-            if voice_index == 0:
-                flush_harmonies(measure_end)
             _add_rest(
                 measure,
                 measure_end - cursor,
@@ -495,6 +583,10 @@ def _add_measure_content(
                 full_measure=(cursor == measure_start),
             )
             cursor = measure_end
+        if voice_index == 0:
+            # A last unit ending exactly on the barline leaves the cursor at
+            # measure_end, so the branch above never runs: flush what is left.
+            flush_harmonies(measure_end)
         previous_written = cursor - measure_start
 
 
@@ -516,8 +608,32 @@ def arrangement_json_to_musicxml(
         raise InvalidArrangementError("'ticks_per_beat' must be a positive integer")
     open_pitches = (document.get("instrument") or {}).get("open_pitches") or []
     total_ticks = max(note["offset_ticks"] for note in notes)
+    # Same bound as the tab grid: a bogus huge offset_ticks would otherwise make
+    # _measure_boundaries walk millions of measures (hours / gigabytes).
+    max_ticks = _MAX_TAB_STEPS * max(1, ticks_per_beat // 4)
+    if total_ticks > max_ticks:
+        raise InvalidArrangementError(
+            f"arrangement is too long to export as MusicXML: {total_ticks} ticks "
+            f"exceeds the {_MAX_TAB_STEPS}-column limit"
+        )
     units = _color_units(notes)
     boundaries = _measure_boundaries(source, ticks_per_beat, total_ticks)
+    # Bucket the units by measure in one pass: filtering the whole list per
+    # measure made rendering O(measures × notes) (minutes on a large score).
+    starts = [boundary[0] for boundary in boundaries]
+    ends = [
+        boundaries[i + 1][0]
+        if i + 1 < len(boundaries)
+        else boundaries[i][0] + boundaries[i][3]
+        for i in range(len(boundaries))
+    ]
+    units_by_measure: dict[int, list[_Unit]] = {}
+    for unit in units:
+        index = max(bisect_right(starts, unit.onset) - 1, 0)
+        while index < len(boundaries) and unit.onset < ends[index]:
+            if unit.offset > starts[index]:
+                units_by_measure.setdefault(index, []).append(unit)
+            index += 1
     tempos = sorted(source.get("tempo_events") or [], key=lambda e: e.get("tick", 0))
     harmony_events: list[dict] = []
     if chords:
@@ -531,6 +647,8 @@ def arrangement_json_to_musicxml(
                 )
             harmony_events.append(chord)
         harmony_events.sort(key=lambda c: c["tick"])
+    tempos_by_measure = _bucket_by_measure(tempos, starts, ends)
+    harmonies_by_measure = _bucket_by_measure(harmony_events, starts, ends)
 
     root = ET.Element("score-partwise", {"version": "4.0"})
     part_list = ET.SubElement(root, "part-list")
@@ -549,11 +667,7 @@ def arrangement_json_to_musicxml(
         previous_meter = (
             boundaries[measure_number - 2][1:3] if measure_number >= 2 else None
         )
-        measure_harmonies = [
-            chord
-            for chord in harmony_events
-            if measure_start <= chord["tick"] < measure_end
-        ]
+        measure_harmonies = harmonies_by_measure.get(measure_number - 1, [])
         measure = ET.SubElement(part, "measure", {"number": str(measure_number)})
         _add_measure_content(
             measure,
@@ -563,8 +677,8 @@ def arrangement_json_to_musicxml(
             numerator,
             denominator,
             previous_meter,
-            units,
-            tempos,
+            units_by_measure.get(measure_number - 1, []),
+            tempos_by_measure.get(measure_number - 1, []),
             ticks_per_beat,
             open_pitches,
             measure_harmonies,

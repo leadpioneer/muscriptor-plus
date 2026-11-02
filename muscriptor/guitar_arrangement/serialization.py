@@ -161,6 +161,15 @@ def solution_to_dict(solution: ArrangementSolution) -> dict:
             ],
         }
 
+    # Map each note to its onset event's index, so note_row attaches the
+    # event_id in O(1) instead of rescanning the phrase's events per note.
+    note_event = {
+        note: assigned_event.event.index
+        for p in solution.phrases
+        for assigned_event in p.events
+        for note in assigned_event.event.notes
+    }
+
     return {
         "schema_version": SCHEMA_VERSION,
         "source": {
@@ -254,15 +263,7 @@ def solution_to_dict(solution: ArrangementSolution) -> dict:
             for assigned_event in p.events
         ],
         "notes": [
-            note_row(
-                a,
-                p.index,
-                next(
-                    f"event:{e.event.index}"
-                    for e in p.events
-                    if a.note in e.event.notes
-                ),
-            )
+            note_row(a, p.index, f"event:{note_event[a.note]}")
             for p in solution.phrases
             for a in p.assigned
         ],

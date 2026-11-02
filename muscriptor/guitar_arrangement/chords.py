@@ -12,6 +12,7 @@ exception is `choose_playable_subset`, used by the pipeline's
 Pure function module: no files, no network, no FastAPI.
 """
 
+import heapq
 from dataclasses import replace
 from itertools import combinations
 from typing import Iterator
@@ -37,6 +38,17 @@ from .models import (
 # the raw space is ≤4^6 but the cap makes the worst case provably bounded.
 _MAX_FINGER_VARIANTS = 16
 
+# Bounds on the chord-overflow "reduce" search, which otherwise enumerates
+# C(n, 6) subsets of one dense onset (a 40-note cluster already costs seconds).
+# A playable guitar chord holds at most `string_count` notes and the ranking
+# below prefers the highest and lowest pitches (the melody and the bass), so
+# beyond a modest onset size the search only considers those extremes — enough
+# for real input, bounded for pathological clusters.
+_MAX_SUBSET_NOTES = 16
+# How many ranked subsets are probed per size before giving up and trying a
+# smaller size; with `_MAX_SUBSET_NOTES` the candidate space is already small.
+_MAX_SUBSET_CANDIDATES = 64
+
 
 def choose_playable_subset(
     event: NoteEvent, tuning: GuitarTuning, config: SolverConfig
@@ -56,6 +68,13 @@ def choose_playable_subset(
     notes the arrangement is allowed to keep, never their pitches.
     """
     ordered = tuple(sorted(event.notes, key=lambda n: (-n.pitch, n.id)))
+    # For a pathological dense onset, keep only the highest and lowest notes so
+    # the C(n, 6) scan stays bounded. The extremes are what rank() favours most,
+    # so real (small) chords are unaffected; a pathological cluster gets a valid
+    # playable subset of those extremes rather than an exhaustive optimum.
+    if len(ordered) > _MAX_SUBSET_NOTES:
+        half = _MAX_SUBSET_NOTES // 2
+        ordered = ordered[:half] + ordered[-half:]
     limit = min(len(ordered), tuning.string_count)
 
     def rank(combo: tuple[MidiNote, ...]) -> tuple:
@@ -65,7 +84,11 @@ def choose_playable_subset(
         return (-classes, -extremes, spread, tuple(note.id for note in combo))
 
     for size in range(limit, 0, -1):
-        for combo in sorted(combinations(ordered, size), key=rank):
+        # Best-ranked subsets first, bounded so a huge onset cannot force a full
+        # C(n, 6) scan (nsmallest keeps only the top candidates in memory).
+        for combo in heapq.nsmallest(
+            _MAX_SUBSET_CANDIDATES, combinations(ordered, size), key=rank
+        ):
             probe = replace(event, notes=combo)
             try:
                 generate_chord_shapes(probe, tuning, config)
